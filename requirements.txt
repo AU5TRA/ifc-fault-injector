@@ -1,0 +1,4 @@
+# Requires CPython 3.10-3.12 (ifcopenshell ships no PyPy wheels).
+ifcopenshell==0.8.5
+httpx==0.28.1
+pytest==9.1.1

@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.pytest_cache/
+
+# Emitted scripts and the IFC files they produce. Leading slash matters: a
+# bare `generated/` would also swallow ifcfault/library/generated/, which is
+# source and must be tracked.
+/generated/
+
+# Cached LLM responses and the call log.
+ifcfault/.llm_cache/
+
+# Synthesized rules are NOT tracked by default: each one is a machine-written
+# file that has passed validation but not human review, and committing it
+# would quietly promote it to part of the library. Review one, then
+# `git add -f` it deliberately.
+ifcfault/library/generated/*.py
+!ifcfault/library/generated/__init__.py
