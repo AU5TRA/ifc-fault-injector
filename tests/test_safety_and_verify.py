@@ -129,7 +129,7 @@ def test_report_record_crosscheck_catches_a_wrong_key(tmp_path):
         "colour": {"hex": "#E6194B"},
         "marking": {"painted_items": 3, "marker_global_ids": ["m1"]},
     }
-    result = validate.check_report_matches_record(report, record)
+    result = validate.check_report_matches_record(report, record, colored=True)
     assert not result.passed
     assert "3" in result.message and "0" in result.message
 
@@ -147,7 +147,7 @@ def test_report_record_crosscheck_passes_when_consistent(tmp_path):
         "colour": {"hex": "#E6194B"},
         "marking": {"painted_items": 3, "marker_global_ids": ["m1"]},
     }
-    assert validate.check_report_matches_record(report, record).passed
+    assert validate.check_report_matches_record(report, record, colored=True).passed
 
 
 def test_report_record_crosscheck_notices_a_missing_target_id(tmp_path):
@@ -158,7 +158,7 @@ def test_report_record_crosscheck_notices_a_missing_target_id(tmp_path):
         "colour": {"hex": "#E6194B"},
         "marking": {},
     }
-    result = validate.check_report_matches_record(report, record)
+    result = validate.check_report_matches_record(report, record, colored=True)
     assert not result.passed
     assert "0abcDEF" in result.message
 
@@ -203,3 +203,141 @@ def test_a_crash_inside_the_rule_is_the_rules_fault_not_the_harnesses():
     assert validate.innermost_frame(stderr) in validate.RULE_FUNCTIONS
     # ...and it is not one of the harness parts, so harness blaming declines it
     assert harness_mod.blamed_by_traceback(stderr) is None
+
+
+# ---------------------------------------------------------------------------
+# --colored / --no-color: one IFC per run
+# ---------------------------------------------------------------------------
+def test_unmarked_report_may_not_claim_colouring(tmp_path):
+    """The mirror image of the wrong-key bug, introduced by the flag: a
+    _report_bottom that ignores ctx["colored"] prints its marked-up
+    boilerplate on an unmarked run, sending the reader hunting for a colour
+    that is not in the file."""
+    report = tmp_path / "r.txt"
+    report.write_text(
+        "WHERE TO FIND IT\n  Global ID: 0abcDEF\n"
+        "HOW TO SPOT IT IN A VIEWER\n  Colour: RED (#E6194B)\n"
+        "  Coloured items: 3\n  Re-run with --colored for a marked copy.\n",
+        encoding="utf-8",
+    )
+    record = {
+        "mutation": {"target_global_id": "0abcDEF"},
+        "colour": {"hex": "#E6194B"},
+        "marking": {},
+    }
+    result = validate.check_report_matches_record(report, record, colored=False)
+    assert not result.passed
+    assert "--no-color" in result.message
+
+
+def test_unmarked_run_may_not_carry_a_marking_block(tmp_path):
+    """_mark_violation must not be called at all without --colored. If the
+    record shows it ran, the flag is being ignored."""
+    report = tmp_path / "r.txt"
+    report.write_text(
+        "WHERE TO FIND IT\n  Global ID: 0abcDEF\n"
+        "HOW TO SPOT IT IN A VIEWER\n  Colour: RED (#E6194B)\n"
+        "  No visual marking; re-run with --colored.\n",
+        encoding="utf-8",
+    )
+    record = {
+        "mutation": {"target_global_id": "0abcDEF"},
+        "colour": {"hex": "#E6194B"},
+        "marking": {"painted_items": 3, "marker_global_ids": ["m1"]},
+    }
+    result = validate.check_report_matches_record(report, record, colored=False)
+    assert not result.passed
+    assert "marking" in result.message
+
+
+def test_unmarked_report_tells_the_reader_how_to_get_a_marked_file(tmp_path):
+    report = tmp_path / "r.txt"
+    report.write_text(
+        "WHERE TO FIND IT\n  Global ID: 0abcDEF\n"
+        "HOW TO SPOT IT IN A VIEWER\n  Colour: RED (#E6194B)\n"
+        "  No visual marking was applied.\n",
+        encoding="utf-8",
+    )
+    record = {
+        "mutation": {"target_global_id": "0abcDEF"},
+        "colour": {"hex": "#E6194B"},
+        "marking": {},
+    }
+    result = validate.check_report_matches_record(report, record, colored=False)
+    assert not result.passed
+    assert "--colored" in result.message
+
+    report.write_text(
+        "WHERE TO FIND IT\n  Global ID: 0abcDEF\n"
+        "HOW TO SPOT IT IN A VIEWER\n  Colour: RED (#E6194B)\n"
+        "  No visual marking. Re-run with --colored for a marked-up copy.\n",
+        encoding="utf-8",
+    )
+    assert validate.check_report_matches_record(report, record, colored=False).passed
+
+
+def test_run_script_always_passes_the_mode_explicitly(tmp_path, monkeypatch):
+    """Neither mode may rely on the generated script's own default: a main()
+    that gets the default backwards would otherwise write the other file and
+    every check would be run against the wrong one."""
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        class P:
+            returncode, stdout, stderr = 0, "", ""
+        return P()
+
+    monkeypatch.setattr(validate.subprocess, "run", fake_run)
+
+    validate.run_script(tmp_path / "s.py", tmp_path / "m.ifc", tmp_path / "w",
+                        colored=False)
+    assert "--no-color" in seen["cmd"] and "--colored" not in seen["cmd"]
+
+    validate.run_script(tmp_path / "s.py", tmp_path / "m.ifc", tmp_path / "w",
+                        colored=True)
+    assert "--colored" in seen["cmd"] and "--no-color" not in seen["cmd"]
+
+
+def test_merge_passes_fails_the_whole_emission_if_marking_fails():
+    """A script whose unmarked file is perfect but whose marking is not
+    findable has not passed. The plain pass's verdict alone would say it
+    had."""
+    plain = validate.ValidationResult(
+        ok=True, fault=validate.FAULT_NONE,
+        checks=[C.CheckResult("a1_clause_violated", True)],
+        returncode=0, record={"rule_id": "A1"},
+    )
+    marked = validate.ValidationResult(
+        ok=False, fault=validate.FAULT_HARNESS, retryable=True,
+        checks=[C.CheckResult("a1_clause_violated", True),
+                C.CheckResult("marker_box_present", False, message="no marker")],
+        returncode=0, feedback="marker_box_present: no marker",
+    )
+    merged = validate.merge_passes(plain, marked)
+
+    assert not merged.ok
+    assert merged.fault == validate.FAULT_HARNESS and merged.retryable
+    names = [c.name for c in merged.checks]
+    assert names.count("a1_clause_violated") == 1, "a colliding check was duplicated"
+    assert "marker_box_present" in names
+    assert "--colored pass" in merged.feedback
+
+
+def test_harness_prompt_pins_the_flag_spelling():
+    """The generated main() gets these two flags by being told them
+    literally. validate.run_script passes them literally too, so a drift in
+    either spelling breaks every emission - pin both to the same strings."""
+    from ifcfault import harness as H
+
+    main_task = next(s for s in H.PARTS if s.name == "main").task
+    assert '"--colored"' in main_task
+    assert '"--no-color"' in main_task
+    assert 'set_defaults(colored=False)' in main_task, "marking must default OFF"
+
+
+def test_context_keys_describe_one_ifc_not_two():
+    from ifcfault import harness as H
+
+    assert 'ctx["colored"]' in H.CONTEXT_KEYS
+    assert "unmarked, colored, report, record" not in H.CONTEXT_KEYS

@@ -10,9 +10,15 @@ script is:
      ifcopenshell, or a stray `os.remove` in generated code stays inside a
      process boundary with a timeout on it.
   3. checked on its RESULTS by `verify/`, which shares no code with the rule
-     library  - the files it wrote must parse, must differ from the source in
+     library  - the file it wrote must parse, must differ from the source in
      exactly the ways the mutation record declares, and the clause must
      actually be violated.
+
+A pass checks ONE run in ONE mode, because the script writes one IFC per run.
+The plain (`--no-color`) pass is the one that carries the guarantees and is
+always made; a `--colored` pass is a separate execution, checking the marked
+file that run produced. Each pass verifies what its own run created and
+assumes nothing about a file it did not see.
 
 Failures are then CLASSIFIED, because the right response differs:
 
@@ -118,6 +124,40 @@ class ValidationResult:
         return "\n".join(lines)
 
 
+def merge_passes(plain: ValidationResult, marked: ValidationResult) -> ValidationResult:
+    """Fold a --colored pass into the plain one, as a single verdict.
+
+    Both passes ran the same script, so their check names overlap. The marked
+    pass's contribution is the marking checks; where a name collides the
+    plain result is kept, because that is the run whose file is the actual
+    deliverable. The verdict is the AND of the two: a script that cannot
+    produce a findable marked file has not passed, even though the file you
+    would hand a checker is fine.
+    """
+    seen = {c.name for c in plain.checks}
+    combined = list(plain.checks) + [c for c in marked.checks if c.name not in seen]
+
+    merged = ValidationResult(
+        ok=plain.ok and marked.ok,
+        fault=plain.fault if not plain.ok else marked.fault,
+        retryable=plain.retryable if not plain.ok else marked.retryable,
+        checks=combined,
+        returncode=plain.returncode if plain.returncode else marked.returncode,
+        stdout=plain.stdout,
+        # The repair loop reads stderr to blame a function by traceback, so
+        # the failing run's is the one that has to survive the merge.
+        stderr=plain.stderr if not plain.ok else marked.stderr,
+        outputs={**plain.outputs,
+                 **{f"colored_{k}": v for k, v in marked.outputs.items()}},
+        record=plain.record or marked.record,
+    )
+    merged.feedback = "\n".join(filter(None, [
+        plain.feedback,
+        f"[--colored pass] {marked.feedback}" if marked.feedback else "",
+    ]))[:3000]
+    return merged
+
+
 # ---------------------------------------------------------------------------
 # what the mutation record says is allowed to differ
 # ---------------------------------------------------------------------------
@@ -192,20 +232,17 @@ def derive_allowed_sets(source_model, output_model, mutation: dict) -> tuple[set
 # ---------------------------------------------------------------------------
 # marked-file checks
 # ---------------------------------------------------------------------------
-def check_marking(colored_path: Path, rule_id: str, name_tag: str,
+def check_marking(model, rule_id: str, name_tag: str,
                   pset_name: str) -> list[C.CheckResult]:
     """The colored file has to actually be findable in a viewer. Colour alone
     is not enough (Revit drops it), so at least one of the three handles must
-    be verifiably present, and the marker box must always be."""
+    be verifiably present, and the marker box must always be.
+
+    Takes an already-open model: the caller has parsed this file once
+    already, and re-reading a 340MB IFC to count styled items is minutes
+    spent for nothing.
+    """
     results = []
-    parse = C.check_parses_cleanly(colored_path)
-    parse.name = "colored_parses_cleanly"
-    results.append(parse)
-    if not parse.passed:
-        return results
-
-    model = ifcopenshell.open(str(colored_path))
-
     styled = len(model.by_type("IfcStyledItem"))
     styles = [s for s in model.by_type("IfcSurfaceStyle")
               if (s.Name or "").upper() == f"VIOLATION_{rule_id.upper()}"]
@@ -237,7 +274,8 @@ def check_marking(colored_path: Path, rule_id: str, name_tag: str,
     return results
 
 
-def check_report_matches_record(report_path: Path, record: dict) -> C.CheckResult:
+def check_report_matches_record(report_path: Path, record: dict,
+                                colored: bool = False) -> C.CheckResult:
     """The prose report must not contradict the machine-readable record.
 
     This exists because of a specific, recurring class of generated-code bug:
@@ -246,6 +284,11 @@ def check_report_matches_record(report_path: Path, record: dict) -> C.CheckResul
     announces that nothing was coloured while the file is fully coloured.
     Nothing crashes and every section is present, so only a cross-check
     against the record catches it.
+
+    `colored` catches the mirror-image bug the flag introduced: a
+    `_report_bottom` that ignores ctx["colored"] and prints its marked-up
+    boilerplate regardless, telling the reader to look for a colour and a
+    marker box in a file that has neither.
     """
     try:
         text = report_path.read_text(encoding="utf-8", errors="replace")
@@ -260,23 +303,47 @@ def check_report_matches_record(report_path: Path, record: dict) -> C.CheckResul
     target = mutation.get("target_global_id")
     if target and target not in text:
         problems.append(f"the target GlobalId {target} does not appear in the report")
+
+    # The colour legend is printed in both modes, so the rule's own colour is
+    # expected in the text either way - it is only the CLAIM of having
+    # applied it that is mode-dependent.
     if colour.get("hex") and colour["hex"] not in text:
         problems.append(f"the colour {colour['hex']} does not appear in the report")
 
-    # If the report states a coloured-item count, it has to be the real one.
-    painted = marking.get("painted_items")
-    if isinstance(painted, int):
-        stated = re.search(r"(?:colou?red|painted|styled)\s+items?\s*[:=]\s*(\d+)",
-                           text, re.IGNORECASE)
-        if stated and int(stated.group(1)) != painted:
+    stated = re.search(r"(?:colou?red|painted|styled)\s+items?\s*[:=]\s*(\d+)",
+                       text, re.IGNORECASE)
+
+    if colored:
+        # If the report states a coloured-item count, it has to be the real one.
+        painted = marking.get("painted_items")
+        if isinstance(painted, int) and stated and int(stated.group(1)) != painted:
             problems.append(
                 f"the report says {stated.group(1)} coloured item(s) but the record says "
                 f"{painted} - the report is reading a key the marking step never wrote"
             )
 
-    markers = marking.get("marker_global_ids") or []
-    if markers and "arker" not in text:
-        problems.append("marker boxes were added but the report never mentions a marker")
+        markers = marking.get("marker_global_ids") or []
+        if markers and "arker" not in text:
+            problems.append("marker boxes were added but the report never mentions a marker")
+    else:
+        # Nothing was marked. A report that claims otherwise sends the reader
+        # hunting for a colour that is not in the file.
+        if marking:
+            problems.append(
+                f"the run was unmarked but the record carries a non-empty marking block "
+                f"({sorted(marking)}) - _mark_violation was called when it should not "
+                f"have been"
+            )
+        if stated and int(stated.group(1)) > 0:
+            problems.append(
+                f"the report claims {stated.group(1)} coloured item(s) on a --no-color "
+                f"run - _report_bottom is ignoring ctx['colored']"
+            )
+        if "--colored" not in text:
+            problems.append(
+                "an unmarked report never mentions --colored, so the reader is not told "
+                "how to get a file they can actually find the fault in"
+            )
 
     return C.CheckResult(
         "report_matches_record", not problems, {"problems": problems},
@@ -301,24 +368,51 @@ def check_report_sections(report_path: Path) -> C.CheckResult:
 # the run
 # ---------------------------------------------------------------------------
 def run_script(script_path: Path, source_ifc: Path, workdir: Path,
-               timeout_s: int = DEFAULT_TIMEOUT_S) -> subprocess.CompletedProcess:
+               timeout_s: int = DEFAULT_TIMEOUT_S,
+               colored: bool = False) -> subprocess.CompletedProcess:
+    """Run the emitted script in the mode we are about to check.
+
+    The flag is passed explicitly in BOTH directions rather than relying on
+    the script's default, so a generated `main()` that gets the default the
+    wrong way round is caught here instead of silently producing the other
+    file than the one this validation pass is written to check.
+    """
     workdir.mkdir(parents=True, exist_ok=True)
     return subprocess.run(
         [sys.executable, str(script_path),
-         "--source", str(source_ifc), "--outdir", str(workdir)],
+         "--source", str(source_ifc), "--outdir", str(workdir),
+         "--colored" if colored else "--no-color"],
         capture_output=True, text=True, timeout=timeout_s,
     )
 
 
 def validate(script_path: Path, source_ifc: Path, workdir: Path, *,
              rule_id: str, output_stem: str, name_tag: str, pset_name: str,
-             rule_is_synthesized: bool,
+             rule_is_synthesized: bool, colored: bool = False,
              timeout_s: int = DEFAULT_TIMEOUT_S) -> ValidationResult:
-    """Execute the emitted script and check everything it produced."""
+    """Execute the emitted script in one mode and check what that mode wrote.
+
+    The script writes ONE IFC per run, so a pass checks exactly the file that
+    run produced - there is no second file to reason about and none is
+    assumed.
+
+      colored=False  the default, and the mode that carries the guarantees
+                     worth having: the file must parse, must violate the
+                     clause, and must differ from the source in EXACTLY the
+                     ways the mutation record declares.
+
+      colored=True   the marked-up file. Same correctness checks minus the
+                     strict diff - marking deliberately adds styled items,
+                     a marker proxy and a property set, so a diff run here
+                     would have to be loosened to pass, and a loosened diff
+                     proves nothing. The strict version runs in the plain
+                     pass instead. What this mode adds is proof that the
+                     marking is actually findable in a viewer.
+    """
     result = ValidationResult(ok=False)
 
     try:
-        proc = run_script(script_path, source_ifc, workdir, timeout_s)
+        proc = run_script(script_path, source_ifc, workdir, timeout_s, colored=colored)
     except subprocess.TimeoutExpired:
         result.fault = FAULT_HARNESS
         result.retryable = True
@@ -364,25 +458,46 @@ def validate(script_path: Path, source_ifc: Path, workdir: Path, *,
 
     result.checks.append(C.CheckResult("script_completed", True, {"returncode": 0}))
 
-    # -- the four expected outputs ----------------------------------------
+    # -- the three expected outputs ---------------------------------------
+    ifc_name = f"{output_stem}_colored.ifc" if colored else f"{output_stem}.ifc"
     outputs = {
-        "unmarked_ifc": workdir / f"{output_stem}.ifc",
-        "colored_ifc": workdir / f"{output_stem}_colored.ifc",
+        "ifc": workdir / ifc_name,
         "report_txt": workdir / f"{output_stem}_report.txt",
         "record_json": workdir / f"{output_stem}_record.json",
     }
     result.outputs = {k: str(v) for k, v in outputs.items()}
     missing = [name for name, path in outputs.items() if not path.exists()]
+
+    # The mode's OTHER file must not appear. A `main()` that ignores the flag
+    # and writes both looks like a pass on every check below while quietly
+    # handing a compliance checker a coloured file.
+    other_name = f"{output_stem}.ifc" if colored else f"{output_stem}_colored.ifc"
+    strays = [other_name] if (workdir / other_name).exists() else []
+
     result.checks.append(C.CheckResult(
-        "all_outputs_written", not missing,
-        {"expected": list(outputs), "missing": missing},
-        message="" if not missing else f"did not write: {', '.join(missing)}",
+        "all_outputs_written", not missing and not strays,
+        {"expected": list(outputs), "missing": missing,
+         "unexpected": strays, "mode": "--colored" if colored else "--no-color"},
+        message=("" if not (missing or strays) else
+                 "; ".join(filter(None, [
+                     f"did not write: {', '.join(missing)}" if missing else "",
+                     f"wrote {', '.join(strays)} despite "
+                     f"{'--colored' if colored else '--no-color'}" if strays else "",
+                 ]))),
     ))
-    if missing:
+    if missing or strays:
         result.fault = FAULT_HARNESS
         result.retryable = True
-        result.feedback = (f"the script exited 0 but did not write {', '.join(missing)}. "
-                           f"Every one of the four outputs is required.")
+        flag = "--colored" if colored else "--no-color"
+        parts = []
+        if missing:
+            parts.append(f"the script exited 0 but did not write {', '.join(missing)}. "
+                         f"All three outputs are required.")
+        if strays:
+            parts.append(f"the script was run with {flag} and still wrote "
+                         f"{', '.join(strays)}. Exactly ONE IFC is written per run, "
+                         f"named {ifc_name} in this mode  - honour the flag.")
+        result.feedback = " ".join(parts)
         return result
 
     # -- report + record ---------------------------------------------------
@@ -395,7 +510,8 @@ def validate(script_path: Path, source_ifc: Path, workdir: Path, *,
             "record_parsed", True,
             {"rule_id": record.get("rule_id"), "target": mutation.get("target_global_id")},
         ))
-        result.checks.append(check_report_matches_record(outputs["report_txt"], record))
+        result.checks.append(
+            check_report_matches_record(outputs["report_txt"], record, colored=colored))
     except Exception as e:
         result.checks.append(C.CheckResult("record_parsed", False, message=repr(e)))
         result.fault = FAULT_HARNESS
@@ -404,16 +520,20 @@ def validate(script_path: Path, source_ifc: Path, workdir: Path, *,
                            f"must be valid JSON containing a 'mutation' object.")
         return result
 
-    # -- the unmarked faulty file -----------------------------------------
-    parse = C.check_parses_cleanly(outputs["unmarked_ifc"])
+    # -- the faulty file this mode wrote ----------------------------------
+    parse = C.check_parses_cleanly(outputs["ifc"])
+    if colored:
+        # Owned by _mark_violation here: an unparseable file in this mode
+        # means the marking broke it, not that the rule did.
+        parse.name = "colored_parses_cleanly"
     result.checks.append(parse)
     if not parse.passed:
-        result.fault = FAULT_RULE
-        result.retryable = rule_is_synthesized
+        result.fault = FAULT_HARNESS if colored else FAULT_RULE
+        result.retryable = True if colored else rule_is_synthesized
         result.feedback = f"the faulty IFC does not reparse: {parse.message}"
         return result
 
-    output_model = ifcopenshell.open(str(outputs["unmarked_ifc"]))
+    output_model = ifcopenshell.open(str(outputs["ifc"]))
     source_model = ifcopenshell.open(str(source_ifc))
 
     result.checks.append(C.check_no_dangling_references(output_model))
@@ -438,13 +558,16 @@ def validate(script_path: Path, source_ifc: Path, workdir: Path, *,
         ))
 
     # -- did anything else change? ----------------------------------------
-    changed, removed, added = derive_allowed_sets(source_model, output_model, mutation)
-    result.checks.append(C.check_no_unintended_diff(
-        source_model, output_model, changed, removed, added
-    ))
+    if not colored:
+        changed, removed, added = derive_allowed_sets(source_model, output_model, mutation)
+        result.checks.append(C.check_no_unintended_diff(
+            source_model, output_model, changed, removed, added
+        ))
 
     # -- is the marked file actually findable? -----------------------------
-    result.checks.extend(check_marking(outputs["colored_ifc"], rule_id, name_tag, pset_name))
+    if colored:
+        result.checks.extend(
+            check_marking(output_model, rule_id, name_tag, pset_name))
 
     # -- verdict ----------------------------------------------------------
     failures = result.failed()

@@ -118,7 +118,7 @@ def _cmd_emit(args) -> int:
             source_ifc=source, rule_id=rule_id, new_rule=new_rule,
             outdir=Path(args.outdir), seed=args.seed, no_cache=args.no_cache,
             keep_validation_outputs=args.keep_validation_outputs,
-            timeout_s=args.timeout,
+            timeout_s=args.timeout, validate_colored=args.validate_colored,
         )
     except (EmitError, SynthesisError, LLMError) as e:
         print(f"\nerror: {e}", file=sys.stderr)
@@ -130,11 +130,23 @@ def _cmd_emit(args) -> int:
         print()
         print(f"  python {result.script_path} --outdir out")
         print()
-        print("It writes four files:")
+        print("It writes three files:")
         print(f"  <stem>.ifc          faulty, UNMARKED  - feed this to a compliance checker")
-        print(f"  <stem>_colored.ifc  faulty, marked up  - open this in Revit or a viewer")
         print(f"  <stem>_report.txt   what was changed, where, and how to find it")
         print(f"  <stem>_record.json  the same facts, machine-readable")
+        print()
+        print("Add --colored to get the marked-up copy instead - coloured, name-tagged")
+        print("and with a marker box, for opening in Revit or an IFC viewer:")
+        print()
+        print(f"  python {result.script_path} --outdir out --colored")
+        print(f"    -> <stem>_colored.ifc")
+        print()
+        print("One IFC per run. --no-color is the default; do not hand a checker the")
+        print("coloured file, because the marking tells it where to look.")
+        if not args.validate_colored:
+            print()
+            print("Note: only the unmarked mode was validated. Re-emit with")
+            print("--validate-colored to have the marking checked too.")
     else:
         print(f"The script was written but did NOT pass validation ({result.message}).")
         print("It is on disk so you can read it, but do not trust its output yet.")
@@ -183,6 +195,11 @@ def build_parser() -> argparse.ArgumentParser:
                              help="bypass the LLM response cache (costs real API calls)")
     emit_parser.add_argument("--keep-validation-outputs", action="store_true",
                              help="keep the report/record the validation run produced")
+    emit_parser.add_argument("--validate-colored", action="store_true",
+                             help="also run the candidate with --colored and check the "
+                                  "marking is findable. Off by default: it costs a second "
+                                  "full parse of the source model, and the unmarked file "
+                                  "is the deliverable")
     emit_parser.add_argument("--timeout", type=int, default=None,
                              help="seconds to allow the validation run (default 1800)")
     emit_parser.set_defaults(func=_cmd_emit)

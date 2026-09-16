@@ -46,11 +46,15 @@ CONTEXT_KEYS = """
     ctx["mutation"]          Mutation      what apply_violation returned
     ctx["where"]             dict   describe_element output for the target,
                                     or {} when the target was deleted
-    ctx["marking"]           dict   what _mark_violation returned
-    ctx["paths"]             dict   keys: unmarked, colored, report, record
-    ctx["hashes"]            dict   keys: unmarked, colored (may be missing)
+    ctx["colored"]           bool   True when --colored was passed, so the one
+                                    IFC written carries visual marking
+    ctx["marking"]           dict   what _mark_violation returned, or {} when
+                                    ctx["colored"] is False (it was not called)
+    ctx["paths"]             dict   keys: ifc, report, record  - exactly one
+                                    IFC path, marked or not per ctx["colored"]
+    ctx["hashes"]            dict   key: ifc (may be missing)
     ctx["self_checks"]       dict   keys: dangling_references (int),
-                                    unmarked_reparsed (bool), warnings (list)
+                                    ifc_reparsed (bool), warnings (list)
 """
 
 
@@ -67,9 +71,9 @@ PARTS: tuple[PartSpec, ...] = (
         name="_mark_violation",
         signature="_mark_violation(model, mutation, target, source_path)",
         task="""
-Mark the violation up so a human can find it in a 3D viewer. The faulty IFC
-has ALREADY been written unmarked by the caller, so you are free to modify
-`model` in place here.
+Mark the violation up so a human can find it in a 3D viewer. You are called
+ONLY when the user passed --colored, and the caller writes the IFC AFTER you
+return, so you are free to modify `model` in place here.
 
 Do all of this:
 
@@ -161,8 +165,16 @@ headings, each alone on its own line, spelled exactly:
     SELF-CHECKS
     COLOUR LEGEND
 
-Under HOW TO SPOT IT IN A VIEWER, read these EXACT keys - do not invent key
-names, a wrong key silently reports zero:
+Under HOW TO SPOT IT IN A VIEWER, branch on ctx["colored"].
+
+When ctx["colored"] is False, this run applied NO visual marking at all. Say
+so plainly, say the GlobalId under WHERE TO FIND IT is the only handle, and
+say that re-running the same command with --colored writes a marked-up copy.
+Print nothing about painted items or marker boxes - there are none. Do not
+read ctx["marking"]; it is empty.
+
+When ctx["colored"] is True, read these EXACT keys - do not invent key names,
+a wrong key silently reports zero:
 
     ctx["marking"]["painted_items"]        int, how many items were coloured
     ctx["marking"]["name_after"]           the searchable name tag
@@ -176,19 +188,23 @@ line verbatim, on a line of its own:
 Revit's IFC import often discards IfcSurfaceStyle colours - if the element is not coloured, search for the name tag above or look for the marker box.
 
 Under OUTPUT FILES: each path in ctx["paths"] with its hash from
-ctx["hashes"] when present, and one line each saying what it is for. Use
-these descriptions, which are accurate - do NOT describe the unmarked file
-as unmodified, because it is the faulty model:
+ctx["hashes"] when present, and one line each saying what it is for. There is
+exactly ONE IFC, under the key "ifc", and what it is depends on
+ctx["colored"] - do NOT describe it as unmodified either way, because it is
+the faulty model:
 
-    unmarked : "The faulty model, with no visual marking - feed this to a
-                compliance checker."
-    colored  : "The same faults, marked up for a human - open this in Revit
-                or an IFC viewer."
+    ifc, when ctx["colored"] is False :
+        "The faulty model, with no visual marking - feed this to a
+         compliance checker."
+    ifc, when ctx["colored"] is True :
+        "The faulty model, marked up for a human - open this in Revit or an
+         IFC viewer. Do NOT feed this one to a checker; the marking hands it
+         the answer."
     report   : "This report."
     record   : "The same facts, machine-readable."
 
 Under SELF-CHECKS: ctx["self_checks"]["dangling_references"],
-ctx["self_checks"]["unmarked_reparsed"], and every string in
+ctx["self_checks"]["ifc_reparsed"], and every string in
 ctx["self_checks"]["warnings"]. State plainly that these are structural
 self-checks only, and that independent clause verification was done when the
 script was generated, not here.
@@ -207,7 +223,18 @@ Same formatting conventions as the first half.
 Orchestrate everything and return an int exit code.
 
   1. argparse: --source (default SOURCE_IFC), --outdir (default "."),
-     --params (default "{}"). Then os.makedirs(outdir, exist_ok=True).
+     --params (default "{}"), and a visual-marking switch that defaults OFF:
+
+         parser.add_argument("--colored", dest="colored", action="store_true",
+                             help="write the faulty IFC marked up for a human "
+                                  "viewer (coloured, name-tagged, marker box)")
+         parser.add_argument("--no-color", dest="colored", action="store_false",
+                             help="no visual marking at all (the default)")
+         parser.set_defaults(colored=False)
+
+     Use EXACTLY those flag spellings and that single shared dest, so
+     --colored and --no-color are opposites of one another and the last one
+     given wins. Then os.makedirs(outdir, exist_ok=True).
 
   2. model = ifcopenshell.open(source). Call applicable(model); if not .ok,
      print the reason and return 2 without writing anything. Call
@@ -216,42 +243,57 @@ Orchestrate everything and return an int exit code.
 
   3. mutation = apply_violation(model, target, json.loads(args.params))
 
-  4. Build paths: unmarked = os.path.join(outdir, OUTPUT_STEM + ".ifc"),
-     colored = ... + "_colored.ifc", report = ... + "_report.txt",
-     record = ... + "_record.json".
+  4. Build paths. This run writes exactly ONE IFC, and which one depends on
+     args.colored:
+         ifc_path = os.path.join(
+             outdir, OUTPUT_STEM + ("_colored.ifc" if args.colored else ".ifc"))
+         report = os.path.join(outdir, OUTPUT_STEM + "_report.txt")
+         record = os.path.join(outdir, OUTPUT_STEM + "_record.json")
+     Put them in ctx["paths"] under the keys "ifc", "report", "record".
 
-  5. model.write(unmarked)  -- BEFORE any marking, so it carries no hint.
-
-  6. where = describe_element(model, model.by_guid(mutation.target_global_id))
+  5. where = describe_element(model, model.by_guid(mutation.target_global_id))
      if mutation.attribute != "(entity deleted)" and RULE_ID != "S5", else {}.
-     Wrap in try/except and fall back to {}.
+     Wrap in try/except and fall back to {}. Do this BEFORE any marking, so
+     the recorded name is the original one.
 
-  7. marking = _mark_violation(model, mutation, target, source)
-     then model.write(colored)
+  6. If args.colored:
+         marking = _mark_violation(model, mutation, target, source)
+     else:
+         marking = {}            # do NOT call _mark_violation at all
+     Then model.write(ifc_path)  -- once, after that branch, so an unmarked
+     run carries no hint of where the fault is and a marked run carries all
+     of it.
 
-  8. self_checks: dangling = len(find_dangling_references(model));
-     reparsed = True/False from trying ifcopenshell.open(unmarked) in a
-     try/except; warnings = marking.get("warnings", []).
+  7. self_checks: dangling = len(find_dangling_references(model));
+     reparsed = True/False from trying ifcopenshell.open(ifc_path) in a
+     try/except, under the key "ifc_reparsed";
+     warnings = marking.get("warnings", []).
 
-  9. Build the ctx dict with EXACTLY the keys listed in the context section
-     above, including hashes for unmarked and colored via sha256_of.
+  8. Build the ctx dict with EXACTLY the keys listed in the context section
+     above, including ctx["colored"] = bool(args.colored) and
+     ctx["hashes"] = {"ifc": sha256_of(ifc_path)}.
 
- 10. Write the report: open(report, "w", encoding="utf-8") and write
+  9. Write the report: open(report, "w", encoding="utf-8") and write
      _report_top(ctx) + "\\n" + _report_bottom(ctx).
 
- 11. Write the record with json.dumps(..., indent=2, default=str):
+ 10. Write the record with json.dumps(..., indent=2, default=str):
      {"rule_id": RULE_ID, "rule_clause": RULE_CLAUSE, "rule_origin": RULE_ORIGIN,
       "source_ifc": source, "source_sha256": ..., "schema": model.schema,
       "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
       "harness_generated_by": HARNESS_GENERATED_BY,
+      "colored": bool(args.colored),
       "colour": {"name": COLOUR_NAME, "hex": COLOUR_HEX, "rgb": list(COLOUR_RGB)},
       "target": {"global_id": target.global_id, "score": target.score,
                  "justification": target.justification},
       "mutation": dataclasses.asdict(mutation),
-      "marking": marking, "outputs": {...four paths and two hashes...},
+      "marking": marking, "outputs": {...the three paths and the ifc hash...},
       "self_checks": {...}}
 
- 12. Print a few summary lines and return 0.
+     "colored" is a TOP-LEVEL key of the record, not nested, because it is
+     what tells a later reader which of the two files they are holding.
+
+ 11. Print a few summary lines - including whether marking was applied, and
+     the --colored hint when it was not - and return 0.
 """,
         max_tokens=2000,
     ),

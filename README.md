@@ -10,9 +10,12 @@ python -m ifcfault emit --source "D:\Real World BIMs\models\dental_clinic\arc.if
 
 python generated/dental_clinic_arc_A1_inject.py --outdir out
     -> out/dental_clinic_arc_A1.ifc            faulty, UNMARKED
-    -> out/dental_clinic_arc_A1_colored.ifc    faulty, marked up for a viewer
     -> out/dental_clinic_arc_A1_report.txt     what changed, where, how to find it
     -> out/dental_clinic_arc_A1_record.json    the same facts, machine-readable
+
+python generated/dental_clinic_arc_A1_inject.py --outdir out --colored
+    -> out/dental_clinic_arc_A1_colored.ifc    the same fault, marked up for a viewer
+    -> (report and record, rewritten to describe this run)
 ```
 
 The point of the tool is testing automated compliance checkers. You cannot
@@ -27,18 +30,33 @@ wrote each part of it. You can put it in an appendix, hand it to a reviewer,
 re-run it on a different model, or edit the threshold and re-run. A bare
 output IFC would tell you none of that.
 
-## Two output IFCs, on purpose
+## One IFC per run, and you choose which
 
-- **`<stem>.ifc`** carries the fault and **no visual marking at all.** This is
-  the one you feed to the checker under test. Colouring it would hand the
-  checker the answer.
-- **`<stem>_colored.ifc`** carries the same fault, marked up three ways, so a
-  human can find it. Open this one in Revit or an IFC viewer.
+A run writes exactly one IFC. Marking is **off by default**, because the
+unmarked file is the one the tool exists to produce.
+
+| Invocation | Writes | For |
+|---|---|---|
+| nothing, or `--no-color` | `<stem>.ifc` | The checker under test. **No visual marking at all** — colouring it would hand the checker the answer. |
+| `--colored` | `<stem>_colored.ifc` | A human. The same fault, marked up three ways. Open it in Revit or an IFC viewer. |
+
+The two flags share one argparse destination, so they are true opposites and
+the last one given wins.
+
+Both runs pick the same target and make the same edit — selection is
+deterministic — so the two files carry the identical fault and differ only in
+whether it is signposted. The `.txt` report and `.json` record are rewritten
+each run and describe the file **that** run produced; the record carries a
+top-level `"colored"` key, so a file found on disk later can be told apart
+from its twin.
+
+Never hand the coloured file to a checker you are evaluating. That is the
+whole reason the default is the plain one.
 
 ## Finding the fault in a viewer
 
-Marking is deliberately redundant, because no single handle survives every
-viewer:
+All of this applies to the `--colored` run. Marking is deliberately
+redundant, because no single handle survives every viewer:
 
 | Handle | What it is | Where it works |
 |---|---|---|
@@ -141,8 +159,30 @@ It checks that the file parses, has no dangling references, has no
 relationship left with an empty member list (an EXPRESS `SET [1:?]`
 violation that `ifcopenshell.remove()` leaves behind), differs from the source
 in *exactly* the ways the mutation record declares, and that the clause really
-is violated. Plus that the coloured file is genuinely findable, and that the
-prose report does not contradict the JSON record.
+is violated. Plus that the prose report does not contradict the JSON record.
+
+**A pass checks one run in one mode**, because the script writes one IFC per
+run — it verifies the file that run actually produced and assumes nothing
+about a file it did not see. The plain (`--no-color`) pass is the one that
+carries the guarantees above, and is always made.
+
+`--validate-colored` adds a *second* execution, with `--colored`, that checks
+the marking is genuinely findable — the colour, the name tag, the marker box.
+It is off by default because it costs another full parse of the source model,
+which on a 340MB file is minutes, and because the unmarked file is the
+deliverable. Turn it on when you intend to hand the coloured file to a human.
+The verdict is the AND of the two passes: marking that cannot be found is a
+failure even when the file you would give a checker is perfect.
+
+The strict "nothing else changed" diff runs only in the plain pass. Marking
+deliberately adds styled items, a marker proxy and a property set, so running
+that check against a marked file would mean loosening it — and a loosened
+diff proves nothing. What the plain pass proves about the edit holds for the
+marked file too, since both runs make the identical edit.
+
+Either mode also fails if the script writes the *other* mode's file: a
+`main()` that ignores the flag and writes both would otherwise pass every
+check while quietly handing a compliance checker a coloured model.
 
 Failures are classified, because the right response differs:
 
@@ -182,7 +222,7 @@ models are not in this repo - point `--source` at wherever yours live.
 .venv\Scripts\python -m pytest tests/ -q
 ```
 
-62 tests. The ones needing a real model skip when the corpus is absent, so the
+71 tests. The ones needing a real model skip when the corpus is absent, so the
 suite runs on a fresh clone; set `IFCFAULT_SOURCE_ROOT` to point at yours.
 
 ## A note on the model

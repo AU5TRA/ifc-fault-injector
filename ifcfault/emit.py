@@ -38,7 +38,7 @@ from .inventory import model_inventory
 from .library import get as get_rule
 from .llm import QwenClient
 from .safety import check_source
-from .validate import ValidationResult, validate
+from .validate import ValidationResult, merge_passes, validate
 
 MAX_ROUNDS = 4
 
@@ -73,11 +73,18 @@ def default_stem(source_ifc: Path, rule_id: str) -> str:
 def emit(*, source_ifc: Path, rule_id: Optional[str] = None,
          new_rule: Optional[dict] = None, outdir: Path = Path("generated"),
          seed: int = 1, no_cache: bool = False, keep_validation_outputs: bool = False,
-         timeout_s: Optional[int] = None, log=print) -> EmitResult:
+         timeout_s: Optional[int] = None, validate_colored: bool = False,
+         log=print) -> EmitResult:
     """Emit one validated script.
 
     Exactly one of `rule_id` (a rule already in the library) or `new_rule`
     ({"rule_id", "domain", "clause"}) must be given.
+
+    `validate_colored` adds a SECOND execution of the candidate, with
+    --colored, to prove the marking is findable. It is off by default because
+    it costs another full parse of the source model - minutes, on a big one -
+    and the unmarked file is the deliverable. Turn it on when you intend to
+    hand the coloured file to a human.
     """
     if bool(rule_id) == bool(new_rule):
         raise EmitError("give exactly one of rule_id (a saved rule) or new_rule (a new clause)")
@@ -178,15 +185,33 @@ def emit(*, source_ifc: Path, rule_id: Optional[str] = None,
             log(f"[5/6] running it against the real model in a subprocess "
                 f"(parsing {source_ifc.name} takes a while)")
             started = time.time()
-            validation = validate(
-                candidate, source_ifc, work_root / f"run_{round_no}",
+            common = dict(
                 rule_id=rule.rule_id, output_stem=stem, name_tag=name_tag,
                 pset_name=VIOLATION_PSET,
                 rule_is_synthesized=synthesized is not None,
                 **({"timeout_s": timeout_s} if timeout_s else {}),
             )
-            log(f"      {'PASSED' if validation.ok else 'FAILED'} in "
+            validation = validate(
+                candidate, source_ifc, work_root / f"run_{round_no}",
+                colored=False, **common,
+            )
+            log(f"      --no-color: {'PASSED' if validation.ok else 'FAILED'} in "
                 f"{time.time() - started:.0f}s ({len(validation.checks)} checks)")
+
+            # Only worth the second parse if the first mode is sound; a
+            # harness that cannot write an unmarked file will not write a
+            # marked one either, and the failure is already in hand.
+            if validation.ok and validate_colored:
+                log(f"      running it again with --colored to check the marking")
+                started = time.time()
+                marked = validate(
+                    candidate, source_ifc, work_root / f"run_{round_no}_colored",
+                    colored=True, **common,
+                )
+                log(f"      --colored:  {'PASSED' if marked.ok else 'FAILED'} in "
+                    f"{time.time() - started:.0f}s ({len(marked.checks)} checks)")
+                validation = merge_passes(validation, marked)
+
             for check in validation.checks:
                 if not check.passed:
                     log(f"        FAIL {check.name}: {check.message or check.evidence}")
