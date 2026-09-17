@@ -94,38 +94,86 @@ def _cmd_survey(args) -> int:
 
 
 def _cmd_emit(args) -> int:
-    from .emit import EmitError, emit
+    from .emit import EmitError, emit, emit_multi
     from .llm import LLMError
+    from .plan import PlanError, parse_rule_spec
     from .synth import SynthesisError
 
     source = Path(args.source)
-    new_rule = None
-    rule_id = args.rule
-
-    if args.clause:
-        if not args.domain:
-            print("error: --clause needs --domain (architectural or structural)",
-                  file=sys.stderr)
-            return 2
-        new_rule = {"rule_id": args.rule, "domain": args.domain, "clause": args.clause}
-        rule_id = None
-    elif args.domain:
-        print("error: --domain only means something together with --clause", file=sys.stderr)
-        return 2
 
     try:
-        result = emit(
-            source_ifc=source, rule_id=rule_id, new_rule=new_rule,
-            outdir=Path(args.outdir), seed=args.seed, no_cache=args.no_cache,
-            keep_validation_outputs=args.keep_validation_outputs,
-            timeout_s=args.timeout, validate_colored=args.validate_colored,
-        )
-    except (EmitError, SynthesisError, LLMError) as e:
+        rule_ids = parse_rule_spec(args.rule)
+    except PlanError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+    common = dict(
+        source_ifc=source, outdir=Path(args.outdir), seed=args.seed,
+        no_cache=args.no_cache,
+        keep_validation_outputs=args.keep_validation_outputs,
+        timeout_s=args.timeout, validate_colored=args.validate_colored,
+    )
+
+    try:
+        if len(rule_ids) > 1:
+            # A plan is made of SAVED rules. Synthesis writes one new rule at
+            # a time and needs the model's whole attention on that clause;
+            # once saved it is an ordinary id and can go in any plan.
+            if args.clause or args.domain:
+                print("error: --clause/--domain synthesize ONE new rule, so they cannot be "
+                      "combined with a multi-rule plan.\n"
+                      "       Synthesize it first:\n"
+                      f"         python -m ifcfault emit --source {args.source} "
+                      f"--rule <NEW_ID> --domain ... --clause \"...\"\n"
+                      "       then use that id in a plan like any other.", file=sys.stderr)
+                return 2
+            result = emit_multi(rule_ids=rule_ids, **common)
+        else:
+            new_rule = None
+            rule_id = rule_ids[0]
+            if args.clause:
+                if not args.domain:
+                    print("error: --clause needs --domain (architectural or structural)",
+                          file=sys.stderr)
+                    return 2
+                new_rule = {"rule_id": rule_id, "domain": args.domain,
+                            "clause": args.clause}
+                rule_id = None
+            elif args.domain:
+                print("error: --domain only means something together with --clause",
+                      file=sys.stderr)
+                return 2
+            result = emit(rule_id=rule_id, new_rule=new_rule, **common)
+    except (EmitError, PlanError, SynthesisError, LLMError) as e:
         print(f"\nerror: {e}", file=sys.stderr)
         return 1
 
     print()
-    if result.ok:
+    if result.ok and len(rule_ids) > 1:
+        print(f"Done. One script, {len(rule_ids)} faults ({', '.join(rule_ids)}), "
+              f"injected in that order.")
+        print("Run it yourself to produce the faulty model:")
+        print()
+        print(f"  python {result.script_path} --outdir out")
+        print()
+        print("It writes three files:")
+        print(f"  <stem>.ifc          all {len(rule_ids)} faults, UNMARKED  - "
+              f"feed this to a checker")
+        print(f"  <stem>_report.txt   one section per fault: what, where, how to find it")
+        print(f"  <stem>_record.json  a `mutations` array, in injection order")
+        print()
+        print("Add --colored for the marked-up copy; each fault carries its own rule's")
+        print("colour, so several faults in one file can be told apart:")
+        print()
+        print(f"  python {result.script_path} --outdir out --colored")
+        print()
+        print("The script is all-or-nothing: if any fault has no candidate left it")
+        print("writes nothing and exits 2, rather than under-delivering silently.")
+        if not args.validate_colored:
+            print()
+            print("Note: only the unmarked mode was validated. Re-emit with")
+            print("--validate-colored to have the marking checked too.")
+    elif result.ok:
         print("Done. Run the script yourself to produce the faulty model:")
         print()
         print(f"  python {result.script_path} --outdir out")
@@ -179,9 +227,12 @@ def build_parser() -> argparse.ArgumentParser:
     emit_parser = subparsers.add_parser(
         "emit", help="generate a validated injection script for one model and one rule")
     emit_parser.add_argument("--source", required=True, help="path to the real .ifc model")
-    emit_parser.add_argument("--rule", required=True,
+    emit_parser.add_argument("--rule", required=True, action="append",
                              help="a saved rule id (see `rules`), or a NEW id to synthesize "
-                                  "when combined with --clause")
+                                  "when combined with --clause. Several faults in one "
+                                  "script: comma-separate them (--rule A1,S1), repeat the "
+                                  "flag, and/or use ID:N for N faults of the same rule "
+                                  "(--rule A1:3). Injection follows the order given")
     emit_parser.add_argument("--clause",
                              help="plain-language code clause; use this for a rule that does "
                                   "not exist yet, and the model will write it")

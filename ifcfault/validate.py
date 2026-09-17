@@ -45,6 +45,7 @@ from typing import Optional
 
 import ifcopenshell
 
+from .config import NAME_TAG_TEMPLATE
 from .verify import checks as C
 
 DEFAULT_TIMEOUT_S = 1800  # a 340MB IFC takes minutes just to parse
@@ -161,6 +162,68 @@ def merge_passes(plain: ValidationResult, marked: ValidationResult) -> Validatio
 # ---------------------------------------------------------------------------
 # what the mutation record says is allowed to differ
 # ---------------------------------------------------------------------------
+def read_faults(record: dict) -> list[dict]:
+    """The record's faults, normalised to one shape whatever wrote it.
+
+    A multi-fault script writes a `mutations` array; a single-fault one
+    writes the flat, singular shape it always has. Normalising here rather
+    than at every use site means every check below is written once and works
+    for a plan of one fault or twelve.
+
+    Each entry: {"slot", "label", "rule_id", "mutation", "marking"}.
+    """
+    entries = record.get("mutations")
+    if isinstance(entries, list):
+        out = []
+        for i, entry in enumerate(entries, start=1):
+            mutation = entry.get("mutation") or {}
+            rule_id = entry.get("rule_id") or mutation.get("rule_id") or ""
+            out.append({
+                "slot": entry.get("slot", i),
+                "label": entry.get("label") or rule_id,
+                "rule_id": rule_id,
+                "mutation": mutation,
+                "marking": entry.get("marking") or {},
+                "colour": entry.get("colour") or {},
+            })
+        return out
+
+    mutation = record.get("mutation") or {}
+    rule_id = record.get("rule_id") or mutation.get("rule_id") or ""
+    return [{
+        "slot": 1,
+        "label": rule_id,
+        "rule_id": rule_id,
+        "mutation": mutation,
+        "marking": record.get("marking") or {},
+        "colour": record.get("colour") or {},
+    }]
+
+
+def derive_allowed_sets_multi(source_model, output_model,
+                              mutations: list[dict]) -> tuple[set, set, set]:
+    """The union of what every fault in the plan declares.
+
+    Each fault is accounted for exactly as it would be on its own, then the
+    sets are unioned. The check that uses them stays as strict as it was for
+    one fault: a GlobalId no fault declared is still an unexplained diff.
+
+    One deliberate consequence of the union: if fault 2 modifies an element
+    fault 1 already modified, the diff check cannot tell them apart. That is
+    caught elsewhere - `main()` threads an exclusion set through
+    `candidates()` precisely so two faults never choose the same target.
+    """
+    changed: set = set()
+    removed: set = set()
+    added: set = set()
+    for mutation in mutations:
+        c, r, a = derive_allowed_sets(source_model, output_model, mutation)
+        changed |= c
+        removed |= r
+        added |= a
+    return changed, removed, added
+
+
 def derive_allowed_sets(source_model, output_model, mutation: dict) -> tuple[set, set, set]:
     """(changed, removed, added) GlobalId sets the record accounts for.
 
@@ -296,43 +359,69 @@ def check_report_matches_record(report_path: Path, record: dict,
         return C.CheckResult("report_matches_record", False, message=f"unreadable: {e!r}")
 
     problems = []
-    mutation = record.get("mutation", {}) or {}
-    marking = record.get("marking", {}) or {}
-    colour = record.get("colour", {}) or {}
-
-    target = mutation.get("target_global_id")
-    if target and target not in text:
-        problems.append(f"the target GlobalId {target} does not appear in the report")
-
-    # The colour legend is printed in both modes, so the rule's own colour is
-    # expected in the text either way - it is only the CLAIM of having
-    # applied it that is mode-dependent.
-    if colour.get("hex") and colour["hex"] not in text:
-        problems.append(f"the colour {colour['hex']} does not appear in the report")
+    faults = read_faults(record)
+    multi = len(faults) > 1
 
     stated = re.search(r"(?:colou?red|painted|styled)\s+items?\s*[:=]\s*(\d+)",
                        text, re.IGNORECASE)
 
-    if colored:
-        # If the report states a coloured-item count, it has to be the real one.
-        painted = marking.get("painted_items")
-        if isinstance(painted, int) and stated and int(stated.group(1)) != painted:
+    # EVERY fault must be findable in the prose. A report that describes two
+    # of three injected faults is the multi-fault version of the wrong-key
+    # bug: nothing crashes, every section is present, and the reader is
+    # quietly told about less than the file contains.
+    for entry in faults:
+        where = f" (fault {entry['slot']}, {entry['label']})" if multi else ""
+        target = entry["mutation"].get("target_global_id")
+        if target and target not in text:
             problems.append(
-                f"the report says {stated.group(1)} coloured item(s) but the record says "
-                f"{painted} - the report is reading a key the marking step never wrote"
+                f"the target GlobalId {target}{where} does not appear in the report")
+
+        # The colour legend is printed in both modes, so the rule's own colour
+        # is expected in the text either way - it is only the CLAIM of having
+        # applied it that is mode-dependent.
+        colour_hex = (entry["colour"] or {}).get("hex")
+        if colour_hex and colour_hex not in text:
+            problems.append(f"the colour {colour_hex}{where} does not appear in the report")
+
+    if multi:
+        declared = record.get("fault_count")
+        if isinstance(declared, int) and declared != len(faults):
+            problems.append(
+                f"the record says fault_count={declared} but carries {len(faults)} "
+                f"mutation entries"
+            )
+        # The reader has to be able to tell there is more than one.
+        if not re.search(r"\b%d\b" % len(faults), text):
+            problems.append(
+                f"the report never states that {len(faults)} faults were injected, so a "
+                f"reader cannot tell it describes more than one"
             )
 
-        markers = marking.get("marker_global_ids") or []
-        if markers and "arker" not in text:
+    if colored:
+        # If the report states a coloured-item count, it has to be the real
+        # one. With several faults the printed count belongs to whichever
+        # fault the regex hit first, so it must match SOME fault's count
+        # rather than one particular fault's.
+        painted_counts = [e["marking"].get("painted_items") for e in faults]
+        painted_counts = [p for p in painted_counts if isinstance(p, int)]
+        if painted_counts and stated and int(stated.group(1)) not in painted_counts:
+            problems.append(
+                f"the report says {stated.group(1)} coloured item(s) but no fault in the "
+                f"record reports that many ({painted_counts}) - the report is reading a "
+                f"key the marking step never wrote"
+            )
+
+        if any(e["marking"].get("marker_global_ids") for e in faults) and "arker" not in text:
             problems.append("marker boxes were added but the report never mentions a marker")
     else:
         # Nothing was marked. A report that claims otherwise sends the reader
         # hunting for a colour that is not in the file.
-        if marking:
+        marked = [e["label"] for e in faults if e["marking"]]
+        if marked:
             problems.append(
                 f"the run was unmarked but the record carries a non-empty marking block "
-                f"({sorted(marking)}) - _mark_violation was called when it should not "
-                f"have been"
+                f"for {', '.join(marked)} - _mark_violation was called when it should "
+                f"not have been"
             )
         if stated and int(stated.group(1)) > 0:
             problems.append(
@@ -389,6 +478,7 @@ def run_script(script_path: Path, source_ifc: Path, workdir: Path,
 def validate(script_path: Path, source_ifc: Path, workdir: Path, *,
              rule_id: str, output_stem: str, name_tag: str, pset_name: str,
              rule_is_synthesized: bool, colored: bool = False,
+             expected_plan: tuple = (),
              timeout_s: int = DEFAULT_TIMEOUT_S) -> ValidationResult:
     """Execute the emitted script in one mode and check what that mode wrote.
 
@@ -505,10 +595,14 @@ def validate(script_path: Path, source_ifc: Path, workdir: Path, *,
     try:
         record = json.loads(outputs["record_json"].read_text(encoding="utf-8"))
         result.record = record
-        mutation = record["mutation"]
+        faults = read_faults(record)
+        if not faults or not faults[0]["mutation"]:
+            raise ValueError("no mutation recorded")
         result.checks.append(C.CheckResult(
             "record_parsed", True,
-            {"rule_id": record.get("rule_id"), "target": mutation.get("target_global_id")},
+            {"fault_count": len(faults),
+             "labels": [f["label"] for f in faults],
+             "targets": [f["mutation"].get("target_global_id") for f in faults]},
         ))
         result.checks.append(
             check_report_matches_record(outputs["report_txt"], record, colored=colored))
@@ -517,8 +611,32 @@ def validate(script_path: Path, source_ifc: Path, workdir: Path, *,
         result.fault = FAULT_HARNESS
         result.retryable = True
         result.feedback = (f"{outputs['record_json'].name} is missing or malformed ({e!r}). It "
-                           f"must be valid JSON containing a 'mutation' object.")
+                           f"must be valid JSON containing a 'mutations' array (or, for a "
+                           f"single-fault script, a 'mutation' object).")
         return result
+
+    # -- did the script deliver the plan it was named for? -----------------
+    # A file called ..._A1x2_S1.ifc that contains two faults is a wrong test
+    # case, not a partial one, so this is checked before anything else about
+    # the content.
+    if expected_plan:
+        got = [f["rule_id"] for f in faults]
+        result.checks.append(C.CheckResult(
+            "plan_delivered", got == list(expected_plan),
+            {"expected": list(expected_plan), "injected": got},
+            message="" if got == list(expected_plan) else
+                    f"the plan asked for {len(expected_plan)} fault(s) "
+                    f"({', '.join(expected_plan)}) but the record declares {len(got)} "
+                    f"({', '.join(got) or 'none'})",
+        ))
+        if got != list(expected_plan):
+            result.fault = FAULT_HARNESS
+            result.retryable = True
+            result.feedback = (
+                f"main() must inject EVERY fault in FAULTS, in order, or write nothing "
+                f"and return non-zero. Expected {list(expected_plan)}, recorded {got}."
+            )
+            return result
 
     # -- the faulty file this mode wrote ----------------------------------
     parse = C.check_parses_cleanly(outputs["ifc"])
@@ -539,35 +657,59 @@ def validate(script_path: Path, source_ifc: Path, workdir: Path, *,
     result.checks.append(C.check_no_dangling_references(output_model))
     result.checks.append(C.check_no_degenerate_relationships(output_model))
 
-    # -- did the clause actually get violated? -----------------------------
-    clause_check = C.CLAUSE_CHECKS.get(rule_id.upper())
-    if clause_check is not None:
-        try:
-            result.checks.append(clause_check(output_model, mutation, source_model))
-        except Exception as e:
+    # -- did every clause actually get violated? ---------------------------
+    # Every fault is re-derived independently. One fault passing says nothing
+    # about the next, and a plan is only as good as its weakest entry.
+    multi = len(faults) > 1
+    for entry in faults:
+        entry_rule = (entry["rule_id"] or rule_id).upper()
+        suffix = f" [{entry['label']}]" if multi else ""
+        clause_check = C.CLAUSE_CHECKS.get(entry_rule)
+        if clause_check is not None:
+            try:
+                check = clause_check(output_model, entry["mutation"], source_model)
+            except Exception as e:
+                check = C.CheckResult(
+                    f"{entry_rule.lower()}_clause_violated", False,
+                    message=f"the re-derivation itself raised: {e!r}",
+                )
+            if multi:
+                check.name = f"{check.name}{suffix}"
+            result.checks.append(check)
+        else:
             result.checks.append(C.CheckResult(
-                f"{rule_id.lower()}_clause_violated", False,
-                message=f"the re-derivation itself raised: {e!r}",
+                f"clause_rederivation_available{suffix}", True,
+                {"rule_id": entry_rule},
+                message="no independent re-derivation exists for this clause (it is newly "
+                        "synthesized)  - structural checks only",
             ))
-    else:
-        result.checks.append(C.CheckResult(
-            "clause_rederivation_available", True,
-            {"rule_id": rule_id},
-            message="no independent re-derivation exists for this clause (it is newly "
-                    "synthesized)  - structural checks only",
-        ))
 
     # -- did anything else change? ----------------------------------------
     if not colored:
-        changed, removed, added = derive_allowed_sets(source_model, output_model, mutation)
+        changed, removed, added = derive_allowed_sets_multi(
+            source_model, output_model, [f["mutation"] for f in faults])
         result.checks.append(C.check_no_unintended_diff(
             source_model, output_model, changed, removed, added
         ))
 
     # -- is the marked file actually findable? -----------------------------
     if colored:
-        result.checks.extend(
-            check_marking(output_model, rule_id, name_tag, pset_name))
+        # Marking is checked once per rule, not once per fault: two A1 faults
+        # share one IfcSurfaceStyle and one name-tag prefix by design, so
+        # checking the rule twice would assert the same thing twice.
+        seen_rules: set[str] = set()
+        for entry in faults:
+            entry_rule = (entry["rule_id"] or rule_id).upper()
+            if entry_rule in seen_rules:
+                continue
+            seen_rules.add(entry_rule)
+            tag = (NAME_TAG_TEMPLATE.format(rule_id=entry_rule)
+                   if multi else name_tag)
+            suffix = f" [{entry_rule}]" if multi else ""
+            for check in check_marking(output_model, entry_rule, tag, pset_name):
+                if multi:
+                    check.name = f"{check.name}{suffix}"
+                result.checks.append(check)
 
     # -- verdict ----------------------------------------------------------
     failures = result.failed()
@@ -576,13 +718,15 @@ def validate(script_path: Path, source_ifc: Path, workdir: Path, *,
         result.fault = FAULT_NONE
         return result
 
+    # Multi-fault check names carry a " [A1]" / " [A1#2]" suffix so a report
+    # says WHICH fault failed; ownership is decided on the stem before it.
     harness_owned = {
         "report_complete", "report_matches_record", "record_parsed",
-        "all_outputs_written", "script_completed",
+        "all_outputs_written", "script_completed", "plan_delivered",
         "colour_applied", "marker_box_present", "findable_by_name_or_property",
         "colored_parses_cleanly",
     }
-    if any(f.name in harness_owned for f in failures):
+    if any(f.name.split(" [")[0] in harness_owned for f in failures):
         result.fault = FAULT_HARNESS
         result.retryable = True
     else:

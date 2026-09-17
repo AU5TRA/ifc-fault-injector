@@ -171,6 +171,106 @@ REQUIRED_RULE_DEFS = ("applicable", "candidates", "apply_violation")
 RULE_METADATA_NAMES = ("RULE_ID", "CLAUSE", "DOMAIN", "ELEMENT")
 
 
+# ---------------------------------------------------------------------------
+# namespacing, for scripts that carry more than one rule
+# ---------------------------------------------------------------------------
+def _owned_names(tree: ast.Module) -> set[str]:
+    """Every name a rule module binds at top level.
+
+    These are exactly the names that collide when two rules share a file:
+    all eleven rules define `applicable`, `candidates`, `apply_violation`,
+    `RULE_ID`, `CLAUSE`, `DOMAIN` and `ELEMENT`, and several share constants
+    (`THRESHOLD_MM` appears in four) and private helpers (`_has_swept_profile`
+    in two).
+    """
+    owned: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            owned.add(node.name)
+        elif isinstance(node, ast.Assign):
+            owned.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            owned.add(node.target.id)
+    return owned
+
+
+def _rename_spans(tree: ast.Module, owned: set[str], suffix: str) -> list[tuple]:
+    """(line, col, old, new) for every occurrence of an owned name.
+
+    Driven by the AST rather than by text substitution, so only real
+    identifier occurrences move: `ast.Name` loads and stores, and the names
+    in `def`/`class` headers. A string that happens to contain "candidates",
+    a comment, and an attribute access like `target.candidates` are all left
+    exactly as they were  - which matters, because this source is lifted
+    verbatim precisely so a human can read it in the generated file.
+
+    A local variable that shadows an owned name gets renamed with it. That is
+    harmless: every occurrence within the shadowing scope moves together, so
+    the code means the same thing.
+    """
+    spans: list[tuple] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in owned:
+            spans.append((node.lineno, node.col_offset, node.id, node.id + suffix))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) \
+                and node.name in owned:
+            # `def ` / `class ` header: the name starts after the keyword, and
+            # decorators mean node.lineno is already the `def` line.
+            spans.append((node.lineno, None, node.name, node.name + suffix))
+    return spans
+
+
+def namespace_rule_source(source: str, suffix: str) -> tuple[str, set[str]]:
+    """Suffix every top-level name a rule module defines.
+
+    Returns the rewritten source and the set of names that moved, so the
+    caller knows what the rule's contract functions are now called.
+
+    Comments, blank lines and formatting survive because the rewrite patches
+    individual identifier spans in place instead of round-tripping through
+    `ast.unparse`.
+    """
+    tree = ast.parse(source)
+    owned = _owned_names(tree)
+    if not owned:
+        return source, set()
+
+    lines = source.splitlines()
+    # Group by line, then apply right-to-left so earlier columns on the same
+    # line keep the offsets the AST reported.
+    by_line: dict[int, list[tuple]] = {}
+    for lineno, col, old, new in _rename_spans(tree, owned, suffix):
+        by_line.setdefault(lineno, []).append((col, old, new))
+
+    for lineno, edits in by_line.items():
+        text = lines[lineno - 1]
+        header_edits = [e for e in edits if e[0] is None]
+        col_edits = sorted((e for e in edits if e[0] is not None),
+                           key=lambda e: e[0], reverse=True)
+
+        for col, old, new in col_edits:
+            if text[col:col + len(old)] == old:
+                text = text[:col] + new + text[col + len(old):]
+
+        # `def name(` / `class name(` - the header name carries no column in
+        # the AST, so anchor it on the keyword rather than guessing.
+        for _, old, new in header_edits:
+            for keyword in ("def ", "class "):
+                needle = keyword + old
+                at = text.find(needle)
+                if at != -1:
+                    text = text[:at] + keyword + new + text[at + len(needle):]
+                    break
+        lines[lineno - 1] = text
+
+    # `splitlines()` drops a trailing newline; put it back, so the rewrite is
+    # byte-exact apart from the identifiers it was asked to move.
+    rewritten = "\n".join(lines)
+    if source.endswith("\n"):
+        rewritten += "\n"
+    return rewritten, owned
+
+
 @dataclass
 class RuleCode:
     rule_id: str
@@ -184,17 +284,33 @@ class RuleCode:
     #: Its relative imports are dropped, since the closure inlines those
     #: targets instead - but an absolute one has no other way into the file.
     imports: tuple[str, ...] = ()
+    #: What this rule's top-level names were suffixed with, so a script can
+    #: carry several rules at once. Empty for a single-rule script, whose
+    #: functions keep their plain contract names.
+    suffix: str = ""
+
+    def fn(self, contract_name: str) -> str:
+        """What one of the three contract functions is called in the emitted
+        file: `candidates` on its own, or `candidates_A1` alongside others."""
+        return contract_name + self.suffix
 
 
-def extract_rule(rule_module: ModuleType) -> RuleCode:
+def extract_rule(rule_module: ModuleType, suffix: str = "") -> RuleCode:
     """Lift a saved rule out of the library as text.
 
     Everything the module defines at top level is taken  - the three contract
     functions, its metadata constants, its thresholds, and its private
     helpers  - minus the imports, which the closure supplies instead.
+
+    `suffix` namespaces every one of those top-level names, which is what
+    lets a multi-fault script carry two rules that both define `candidates`.
+    A single-rule script passes "" and the emitted code is identical to what
+    it has always been.
     """
     path = Path(rule_module.__file__)
     source = path.read_text(encoding="utf-8")
+    if suffix:
+        source, _ = namespace_rule_source(source, suffix)
     lines = source.splitlines()
     tree = ast.parse(source)
 
@@ -210,6 +326,9 @@ def extract_rule(rule_module: ModuleType) -> RuleCode:
         referenced |= _names_in(node)
 
     return RuleCode(
+        # Read off the imported module, not the renamed text: the module is
+        # the source of truth for what the rule IS, and the suffix only
+        # changes what its symbols are called inside the generated file.
         rule_id=rule_module.RULE_ID,
         clause=rule_module.CLAUSE,
         domain=rule_module.DOMAIN,
@@ -218,17 +337,32 @@ def extract_rule(rule_module: ModuleType) -> RuleCode:
         referenced=frozenset(referenced),
         origin=f"saved library rule ({Path(rule_module.__file__).name})",
         imports=tuple(_absolute_imports(tree, lines)),
+        suffix=suffix,
     )
 
 
-def parse_synthesized_rule(source: str, origin: str) -> RuleCode:
+def parse_synthesized_rule(source: str, origin: str, suffix: str = "") -> RuleCode:
     """Same treatment for a rule the model just wrote: strip its imports,
     keep everything else, and read its metadata out of the AST rather than by
-    importing it (which would execute it)."""
+    importing it (which would execute it).
+
+    Metadata is read off the ORIGINAL tree, before any namespacing, so
+    `RULE_ID` is still spelled `RULE_ID` when it is looked up.
+    """
+    metadata_tree = ast.parse(source)
+    metadata: dict[str, str] = {}
+    for node in metadata_tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in RULE_METADATA_NAMES:
+                    if isinstance(node.value, ast.Constant):
+                        metadata[target.id] = str(node.value.value)
+
+    if suffix:
+        source, _ = namespace_rule_source(source, suffix)
     lines = source.splitlines()
     tree = ast.parse(source)
 
-    metadata: dict[str, str] = {}
     blocks: list[str] = []
     referenced: set[str] = set()
     for node in tree.body:
@@ -237,11 +371,6 @@ def parse_synthesized_rule(source: str, origin: str) -> RuleCode:
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) \
                 and isinstance(node.value.value, str):
             continue
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id in RULE_METADATA_NAMES:
-                    if isinstance(node.value, ast.Constant):
-                        metadata[target.id] = str(node.value.value)
         blocks.append(_source_block(lines, node))
         referenced |= _names_in(node)
 
@@ -254,6 +383,7 @@ def parse_synthesized_rule(source: str, origin: str) -> RuleCode:
         referenced=frozenset(referenced),
         origin=origin,
         imports=tuple(_absolute_imports(tree, lines)),
+        suffix=suffix,
     )
 
 
@@ -324,6 +454,63 @@ def build_config_block(*, source_ifc: Path, output_stem: str, rule: RuleCode,
     for rule_id, entry in COLOURS.items():
         lines.append(f"    ({rule_id!r}, {entry.name!r}, {entry.hex!r}),")
     lines.append("]")
+    return "\n".join(lines)
+
+
+def build_plan_block(*, plan, rules: dict) -> str:
+    """The FAULTS table a multi-fault script's `main()` walks.
+
+    Emitted AFTER the rule sections, because each entry holds direct
+    references to that rule's namespaced functions - `candidates_A1` has to
+    exist by the time this list is built. Holding the functions themselves
+    rather than their names means the harness never does a lookup by string,
+    so a typo in a rule id is a NameError at import, not a silent skip at
+    run time.
+    """
+    from .config import colour_for
+
+    lines = [
+        _section("THE PLAN",
+                 "One entry per fault, in injection order. Each is applied to the\n"
+                 "model the previous ones left behind, and adds its target to the\n"
+                 "exclusion set so the next fault of the same rule picks a\n"
+                 "different element."),
+        "",
+        "FAULTS = [",
+    ]
+    for fault in plan:
+        rule = rules[fault.rule_id]
+        colour = colour_for(fault.rule_id)
+        lines += [
+            "    {",
+            f"        \"slot\": {fault.slot},",
+            f"        \"label\": {_py_repr(fault.label)},",
+            f"        \"rule_id\": {_py_repr(fault.rule_id)},",
+            f"        \"occurrence\": {fault.occurrence},",
+            f"        \"of\": {fault.of},",
+            f"        \"clause\": {_py_repr(rule.clause)},",
+            f"        \"domain\": {_py_repr(rule.domain)},",
+            f"        \"element\": {_py_repr(rule.element)},",
+            f"        \"origin\": {_py_repr(rule.origin)},",
+            f"        \"colour_name\": {_py_repr(colour.name)},",
+            f"        \"colour_hex\": {_py_repr(colour.hex)},",
+            f"        \"colour_rgb\": {_py_repr(colour.rgb)},",
+            "        \"name_tag\": "
+            f"{_py_repr(NAME_TAG_TEMPLATE.format(rule_id=fault.rule_id))},",
+            f"        \"deletes_elements\": {_py_repr(fault.rule_id in ('S4', 'S5'))},",
+            f"        \"target_is_a_storey\": {_py_repr(fault.rule_id == 'S5')},",
+            f"        \"applicable\": {rule.fn('applicable')},",
+            f"        \"candidates\": {rule.fn('candidates')},",
+            f"        \"apply_violation\": {rule.fn('apply_violation')},",
+            "    },",
+        ]
+    lines.append("]")
+    lines += [
+        "",
+        "#: How many faults this script injects. The report counts by this, and",
+        "#: `main()` returns non-zero if it cannot deliver every one of them.",
+        f"FAULT_COUNT = {len(plan)}",
+    ]
     return "\n".join(lines)
 
 
@@ -440,6 +627,209 @@ def assemble(*, rule: RuleCode, harness_source: str, source_ifc: Path, output_st
             "Validated before this file was written: static safety gate, then\n"
             "executed against the real source model, then the result checked by an\n"
             "independent verifier that shares no code with the rule above.",
+        ),
+        harness_source.strip(),
+        "",
+        "",
+        'if __name__ == "__main__":',
+        "    raise SystemExit(main())",
+        "",
+    ]
+    return "\n".join(parts)
+
+
+def build_multi_config_block(*, source_ifc: Path, output_stem: str, model_name: str,
+                             harness_origin: str) -> str:
+    """The constants a multi-fault harness relies on.
+
+    Deliberately smaller than the single-fault one: everything that used to
+    be a per-rule global (RULE_ID, COLOUR_RGB, NAME_TAG_PREFIX) now lives in
+    the FAULTS table instead, because there is no longer one of each.
+    """
+    from .config import COLOURS
+
+    lines = [
+        _section("CONFIGURATION",
+                 "Generated values. Edit these if you move the file or want a\n"
+                 "different default output location; nothing else needs changing.\n"
+                 "Per-fault values live in the FAULTS table further down."),
+        "",
+        f"SOURCE_IFC = {_py_repr(str(source_ifc))}",
+        f"OUTPUT_STEM = {_py_repr(output_stem)}",
+        "",
+        f"VIOLATION_PSET = {_py_repr(VIOLATION_PSET)}",
+        f"MARKER_SIZE_MM = {_py_repr(MARKER_SIZE_MM)}",
+        "",
+        f"GENERATOR_VERSION = {_py_repr(__version__)}",
+        f"HARNESS_GENERATED_BY = {_py_repr(model_name)}",
+        f"HARNESS_ORIGIN = {_py_repr(harness_origin)}",
+        f"SCRIPT_GENERATED_AT = {_py_repr(time.strftime('%Y-%m-%dT%H:%M:%S'))}",
+        "",
+        "#: Fixed colour table, reproduced here so the report is self-contained.",
+        "COLOUR_LEGEND = [",
+    ]
+    for rule_id, entry in COLOURS.items():
+        lines.append(f"    ({rule_id!r}, {entry.name!r}, {entry.hex!r}),")
+    lines.append("]")
+    return "\n".join(lines)
+
+
+def build_multi_header(*, source_ifc: Path, plan, rules: dict, model_name: str,
+                       output_stem: str) -> str:
+    """The docstring at the top of a multi-fault script."""
+    from .config import colour_for
+
+    head = [
+        "#!/usr/bin/env python3",
+        '"""',
+        f"Injects {len(plan)} compliance violations into one IFC model.",
+        "",
+        "  Source  : " + str(source_ifc),
+        f"  Plan    : {len(plan)} fault(s), injected in the order listed below",
+        "",
+    ]
+    for fault in plan:
+        rule = rules[fault.rule_id]
+        colour = colour_for(fault.rule_id)
+        head += [
+            f"  {fault.slot}. {fault.label:<8} {colour.name} {colour.hex}",
+            f"       {rule.clause}",
+            f"       target: {rule.element or '(see the rule below)'}",
+        ]
+    head += [
+        "",
+        "Each fault is applied to the model the previous one left behind, and adds",
+        "its target to an exclusion set, so two faults of the same rule land on two",
+        "DIFFERENT elements. Injection order is part of the recipe: reorder the plan",
+        "and you may get different targets.",
+        "",
+        "Running this script writes three files next to each other. ONE of them is",
+        "an IFC, and which one depends on whether you pass --colored:",
+        "",
+        f"  {output_stem}.ifc            written by DEFAULT (or with --no-color):",
+        "                               all the faults above, with NO visual marking",
+        "                                - feed this one to a compliance checker",
+        f"  {output_stem}_colored.ifc    written with --colored: the same faults, each",
+        "                               marked in its own rule's colour, so they can",
+        "                               be told apart in a viewer",
+        f"  {output_stem}_report.txt     what was changed, where, and how to find it,",
+        "                               one section per fault",
+        f"  {output_stem}_record.json    the same facts, machine-readable, with a",
+        "                               `mutations` array in injection order",
+        "",
+        "It is ALL-OR-NOTHING. If any fault in the plan cannot be injected  - no",
+        "applicable element left, no candidate outside the exclusion set  - the",
+        "script writes nothing and exits non-zero, rather than handing you a file",
+        "that silently contains fewer defects than its name claims.",
+        "",
+        "HOW THIS FILE WAS BUILT",
+        "",
+    ]
+    for rule_id in _ordered_rule_ids(plan):
+        head.append(f"  rule {rule_id:<8}: {rules[rule_id].origin}")
+    head += [
+        f"  harness     : generated by {model_name}",
+        "  helpers     : inlined verbatim from the ifcfault library, closed over",
+        "                transitively  - this file has no dependency beyond ifcopenshell",
+        "",
+        "Each rule's top-level names are suffixed with its id (candidates_A1,",
+        "candidates_S1, ...) so several rules can share one file. Nothing else about",
+        "them is altered; the bodies are the reviewed library source, comments intact.",
+        "",
+        "It is deterministic: every target is chosen by a ranked, tie-broken-by-GlobalId",
+        "score, and every entity it creates gets a hash-derived GlobalId, so running it",
+        "twice on the same input produces byte-identical output.",
+        '"""',
+        "from __future__ import annotations",
+    ]
+    return "\n".join(head)
+
+
+def _ordered_rule_ids(plan) -> list[str]:
+    """The distinct rules a plan uses, in first-appearance order."""
+    out: list[str] = []
+    for fault in plan:
+        if fault.rule_id not in out:
+            out.append(fault.rule_id)
+    return out
+
+
+def assemble_multi(*, plan, rules: dict, harness_source: str, source_ifc: Path,
+                   output_stem: str, model_name: str, harness_origin: str) -> str:
+    """Stitch a multi-fault script together.
+
+    Same shape as `assemble`, with two differences: the closure is seeded
+    from EVERY rule in the plan rather than one, and a FAULTS table is
+    emitted after the rule sections so the harness can walk the plan without
+    knowing any rule's name.
+    """
+    index, _ = build_index()
+    ordered_rule_ids = _ordered_rule_ids(plan)
+
+    harness_names = _names_in(ast.parse(harness_source))
+    seed: set[str] = set(harness_names)
+    for rule_id in ordered_rule_ids:
+        seed |= set(rules[rule_id].referenced)
+    symbols = closure(seed, index)
+
+    contributing = {s.module for s in symbols}
+    kept_imports: list[str] = []
+    seen: set[str] = set()
+    for module_name in HELPER_MODULES:
+        if module_name not in contributing:
+            continue
+        _, module_imports = index_module(LIBRARY_DIR / f"{module_name}.py", module_name)
+        for statement in module_imports:
+            if statement not in seen:
+                seen.add(statement)
+                kept_imports.append(statement)
+    for rule_id in ordered_rule_ids:
+        for statement in rules[rule_id].imports:
+            if statement not in seen:
+                seen.add(statement)
+                kept_imports.append(statement)
+
+    parts = [
+        build_multi_header(source_ifc=source_ifc, plan=plan, rules=rules,
+                           model_name=model_name, output_stem=output_stem),
+        "",
+        _section("IMPORTS"),
+        "\n".join(kept_imports) if kept_imports else "import ifcopenshell",
+        "",
+        build_multi_config_block(source_ifc=source_ifc, output_stem=output_stem,
+                                 model_name=model_name, harness_origin=harness_origin),
+        "",
+        _section(
+            "INLINED LIBRARY",
+            "Lifted verbatim from ifcfault/library/. Not generated code  - this is\n"
+            "the reviewed helper layer, copied in so the script stands alone.\n"
+            f"{len(symbols)} symbol(s) from: " + ", ".join(sorted(contributing)),
+        ),
+        "\n\n\n".join(s.text for s in symbols),
+        "",
+    ]
+
+    for rule_id in ordered_rule_ids:
+        rule = rules[rule_id]
+        used = sum(1 for f in plan if f.rule_id == rule_id)
+        note = rule.origin + "\n" + rule.clause
+        if used > 1:
+            note += f"\nInjected {used} times, at {used} different targets."
+        parts += [
+            _section(f"RULE {rule_id}   (symbols suffixed {rule.suffix})", note),
+            rule.text,
+            "",
+        ]
+
+    parts += [
+        build_plan_block(plan=plan, rules=rules),
+        "",
+        _section(
+            "HARNESS",
+            f"Generated by {model_name}.\n"
+            "Validated before this file was written: static safety gate, then\n"
+            "executed against the real source model, then the result checked by an\n"
+            "independent verifier that shares no code with the rules above.",
         ),
         harness_source.strip(),
         "",

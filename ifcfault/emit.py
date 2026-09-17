@@ -36,6 +36,9 @@ from .codegen import RuleCode
 from .config import NAME_TAG_TEMPLATE, VIOLATION_PSET, colour_for
 from .inventory import model_inventory
 from .library import get as get_rule
+from .plan import (
+    build_plan, describe_plan, distinct_rule_ids, plan_stem_fragment,
+)
 from .llm import QwenClient
 from .safety import check_source
 from .validate import ValidationResult, merge_passes, validate
@@ -349,3 +352,229 @@ def _validation_document(validation: ValidationResult, script_path: Path, source
     if validation.stderr.strip():
         lines += [bar, "SCRIPT STDERR", bar, "", validation.stderr.strip()[-4000:], ""]
     return "\n".join(lines)
+
+
+def emit_multi(*, source_ifc: Path, rule_ids: list, outdir: Path = Path("generated"),
+               seed: int = 1, no_cache: bool = False,
+               keep_validation_outputs: bool = False,
+               timeout_s: Optional[int] = None, validate_colored: bool = False,
+               log=print) -> EmitResult:
+    """Emit one script that injects several faults into one model.
+
+    Same six steps and the same three gates as `emit`, with the plan threaded
+    through:
+
+      * every DISTINCT rule in the plan is lifted once, with its top-level
+        names suffixed by its id, so `candidates_A1` and `candidates_S1` can
+        share a file
+      * the harness is asked for in its multi-fault shape: `main()` walks
+        FAULTS and passes a growing exclusion set to each `candidates()`
+      * validation additionally checks that the script delivered the WHOLE
+        plan, in order
+
+    Synthesis is not available here on purpose. `--clause` writes one new
+    rule and needs the model's full attention on that one clause; once it has
+    passed validation and been saved, it is an ordinary rule id and can be
+    used in any plan.
+    """
+    if not source_ifc.exists():
+        raise EmitError(f"source IFC not found: {source_ifc}")
+
+    plan = build_plan(list(rule_ids))
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    result = EmitResult(ok=False)
+
+    # -- the rules, BEFORE the model --------------------------------------
+    # Resolving the plan is instant and parsing a 340MB IFC is minutes, so a
+    # typo in a rule id should not cost a model read to discover.
+    ordered = distinct_rule_ids(plan)
+    rules: dict = {}
+    for rule_id in ordered:
+        module = get_rule(rule_id)
+        if module is None:
+            raise EmitError(
+                f"unknown rule '{rule_id}'. Run `ifcfault rules` to list them. A clause "
+                f"with no rule yet has to be synthesized on its own first: "
+                f"`emit --rule {rule_id} --domain ... --clause \"...\"`, which saves it, "
+                f"after which it can be used in a plan like any other."
+            )
+        rules[rule_id] = codegen.extract_rule(module, suffix=f"_{rule_id}")
+
+    log(f"[1/6] reading {source_ifc.name} ({source_ifc.stat().st_size / (1 << 20):.1f} MB)")
+    model = ifcopenshell.open(str(source_ifc))
+    inventory = model_inventory(model, source_ifc)
+    del model
+    log(f"      schema {inventory['schema']}, units {inventory['length_unit']}, "
+        f"{sum(inventory['entity_counts'].values())} elements of interest")
+
+    client = QwenClient(no_cache=no_cache)
+
+    log(f"[2/6] {describe_plan(plan)}")
+    for fault in plan:
+        log(f"      {fault.slot}. {fault.label:<8} {rules[fault.rule_id].clause[:58]}")
+
+    result.rule_id = plan_stem_fragment(plan)
+    result.rule_origin = "; ".join(f"{r}: {rules[r].origin}" for r in ordered)
+    stem = f"{source_ifc.parent.name or 'model'}_{source_ifc.stem}_" \
+           f"{plan_stem_fragment(plan)}".replace(" ", "_")
+
+    shared = {
+        "fault_count": len(plan),
+        "plan": [
+            {
+                "slot": f.slot,
+                "label": f.label,
+                "rule_id": f.rule_id,
+                "clause": rules[f.rule_id].clause,
+                "domain": rules[f.rule_id].domain,
+                "element": rules[f.rule_id].element,
+                "colour": colour_for(f.rule_id).hex,
+                "deletes_elements": f.rule_id in DELETION_RULES,
+                "target_is_a_storey": f.rule_id == "S5",
+            }
+            for f in plan
+        ],
+        "output_stem": stem,
+        "violation_pset": VIOLATION_PSET,
+        "model_inventory": inventory,
+    }
+
+    # -- the harness, one function at a time -------------------------------
+    log(f"[3/6] asking {client.model} for the multi-fault harness, one function at a time")
+    _, parts = harness_mod.generate_multi_harness(client, shared, seed=seed, log=log)
+
+    script_path = outdir / f"{stem}_inject.py"
+    validation: Optional[ValidationResult] = None
+    work_root = Path(tempfile.mkdtemp(prefix="ifcfault_validate_"))
+    expected_plan = tuple(f.rule_id for f in plan)
+
+    try:
+        for round_no in range(1, MAX_ROUNDS + 1):
+            result.rounds = round_no
+            log(f"[4/6] assembling the script (round {round_no})")
+            script = codegen.assemble_multi(
+                plan=plan, rules=rules,
+                harness_source=harness_mod.assemble_multi_parts(parts),
+                source_ifc=source_ifc, output_stem=stem, model_name=client.model,
+                harness_origin=f"round {round_no}",
+            )
+            candidate = work_root / f"candidate_{round_no}.py"
+            candidate.write_text(script, encoding="utf-8")
+
+            required = ["main"]
+            for rule_id in ordered:
+                required += [f"applicable_{rule_id}", f"candidates_{rule_id}",
+                             f"apply_violation_{rule_id}"]
+            whole = check_source(script, required_defs=tuple(required))
+            if not whole.ok:
+                log(f"      assembled script rejected statically: {whole.summary()}")
+                if round_no == MAX_ROUNDS:
+                    break
+                parts["main"] = harness_mod.regenerate_multi_part(
+                    client, "main", shared, parts["main"], whole.summary(), seed)
+                continue
+
+            log(f"[5/6] running it against the real model in a subprocess "
+                f"(parsing {source_ifc.name} takes a while)")
+            started = time.time()
+            common = dict(
+                rule_id=plan[0].rule_id, output_stem=stem,
+                name_tag=NAME_TAG_TEMPLATE.format(rule_id=plan[0].rule_id),
+                pset_name=VIOLATION_PSET, rule_is_synthesized=False,
+                expected_plan=expected_plan,
+                **({"timeout_s": timeout_s} if timeout_s else {}),
+            )
+            validation = validate(
+                candidate, source_ifc, work_root / f"run_{round_no}",
+                colored=False, **common,
+            )
+            log(f"      --no-color: {'PASSED' if validation.ok else 'FAILED'} in "
+                f"{time.time() - started:.0f}s ({len(validation.checks)} checks)")
+
+            if validation.ok and validate_colored:
+                log("      running it again with --colored to check the marking")
+                started = time.time()
+                marked = validate(
+                    candidate, source_ifc, work_root / f"run_{round_no}_colored",
+                    colored=True, **common,
+                )
+                log(f"      --colored:  {'PASSED' if marked.ok else 'FAILED'} in "
+                    f"{time.time() - started:.0f}s ({len(marked.checks)} checks)")
+                validation = merge_passes(validation, marked)
+
+            for check in validation.checks:
+                if not check.passed:
+                    log(f"        FAIL {check.name}: {check.message or check.evidence}")
+
+            if validation.ok:
+                break
+            if not validation.retryable:
+                log(f"      fault class '{validation.fault}' is not something regeneration "
+                    f"can fix - stopping here")
+                break
+            if round_no == MAX_ROUNDS:
+                break
+
+            if validation.fault == "harness":
+                part = harness_mod.choose_part_to_repair(validation)
+                log(f"      repairing {part}() with the concrete failure")
+                parts[part] = harness_mod.regenerate_multi_part(
+                    client, part, shared, parts[part], validation.feedback, seed)
+            else:
+                # Every rule in a plan is a SAVED rule, so a rule-class
+                # failure is the plan not fitting this model. Regenerating
+                # cannot help; `survey` can.
+                log("      the plan and this model do not fit - stopping")
+                break
+
+        # -- hand over -----------------------------------------------------
+        result.validation = validation
+        script_path.write_text(
+            codegen.assemble_multi(
+                plan=plan, rules=rules,
+                harness_source=harness_mod.assemble_multi_parts(parts),
+                source_ifc=source_ifc, output_stem=stem, model_name=client.model,
+                harness_origin=("validated" if (validation and validation.ok)
+                                else "DID NOT PASS VALIDATION"),
+            ),
+            encoding="utf-8",
+        )
+        result.script_path = script_path
+
+        if validation is None:
+            result.message = "no validation run completed"
+            return result
+
+        report_path = outdir / f"{stem}_emission_validation.txt"
+        header_rule = RuleCode(
+            rule_id=plan_stem_fragment(plan),
+            clause=f"{len(plan)} fault plan: " + ", ".join(
+                f"{f.label} ({rules[f.rule_id].clause[:40]})" for f in plan),
+            domain="; ".join(sorted({rules[r].domain for r in ordered})),
+            element="", text="", referenced=frozenset(),
+            origin=result.rule_origin,
+        )
+        report_path.write_text(
+            _validation_document(validation, script_path, source_ifc, header_rule,
+                                 client.model, result.rounds, parts),
+            encoding="utf-8")
+        result.validation_report_path = report_path
+
+        if keep_validation_outputs and validation.outputs:
+            kept = outdir / f"{stem}_validation_run"
+            kept.mkdir(parents=True, exist_ok=True)
+            for path in validation.outputs.values():
+                produced = Path(path)
+                if produced.exists() and produced.suffix in (".txt", ".json"):
+                    shutil.copy2(produced, kept / produced.name)
+            result.notes.append(f"validation run artefacts kept in {kept}")
+
+        result.ok = validation.ok
+        result.message = ("validated" if validation.ok
+                          else f"validation failed ({validation.fault})")
+        log(f"[6/6] {'wrote' if validation.ok else 'wrote (UNVALIDATED)'} {script_path}")
+        return result
+
+    finally:
+        shutil.rmtree(work_root, ignore_errors=True)
