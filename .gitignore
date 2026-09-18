@@ -2,6 +2,10 @@
 __pycache__/
 *.pyc
 .env
+# Any .env variant too: a `.env.bak` from editing the model line holds a
+# live API key just as the original does, and `.env` alone does not match it.
+.env.*
+!.env.example
 .pytest_cache/
 
 # Emitted scripts and the IFC files they produce. Leading slash matters: a

@@ -1,0 +1,68 @@
+{
+  "rule_id": "A1",
+  "rule_clause": "IBC 1010.1.1  - egress door clear width shall be not less than 815 mm",
+  "rule_origin": "saved library rule (a1_door_width.py)",
+  "source_ifc": "D:\\Real World BIMs\\models\\dental_clinic\\arc.ifc",
+  "source_sha256": "2ac970ce065ecac4e0c9e5f453a257169e90d0067f419b7e33533a64ef837880",
+  "schema": "IFC2X3",
+  "generated_at": "2026-09-18T12:28:39",
+  "harness_generated_by": "qwen/qwen3-coder",
+  "colored": true,
+  "colour": {
+    "name": "RED",
+    "hex": "#E6194B",
+    "rgb": [
+      0.902,
+      0.098,
+      0.2941
+    ]
+  },
+  "target": {
+    "global_id": "0mxk1RW8H5mvX1dNnpRqso",
+    "score": 227.0,
+    "justification": "width=915mm; 227 door(s) in this model share that width (the modal single-leaf size)"
+  },
+  "mutation": {
+    "rule_id": "A1",
+    "element_type": "IfcDoor",
+    "target_global_id": "0mxk1RW8H5mvX1dNnpRqso",
+    "attribute": "IfcDoor.OverallWidth",
+    "before": 915.0000000000005,
+    "after": 750.0,
+    "clause": "IBC 1010.1.1  - egress door clear width shall be not less than 815 mm",
+    "description": "Egress door clear width reduced from 915.0mm to 750.0mm, below the 815mm minimum",
+    "extra": {
+      "element_id": 1897,
+      "threshold_mm": 815.0,
+      "mechanism": "direct attribute write"
+    }
+  },
+  "marking": {
+    "painted_items": 1,
+    "name_before": "M_Single-Flush:0915 x 2134mm Exterior:0915 x 2134mm Exterior:252490",
+    "name_after": "[!A1 VIOLATION!] M_Single-Flush:0915 x 2134mm Exterior:0915 x 2134mm Exterior:252490",
+    "pset": "Pset_ViolationMarker",
+    "marker_locations_mm": [
+      [
+        -3995.000000000581,
+        49842.99999999927,
+        0.0
+      ]
+    ],
+    "marker_global_ids": [
+      "2oPRMpMAqqGi445UbBFIii"
+    ],
+    "warnings": []
+  },
+  "outputs": {
+    "ifc": "out\\dental_clinic_arc_A1_colored.ifc",
+    "report": "out\\dental_clinic_arc_A1_report.txt",
+    "record": "out\\dental_clinic_arc_A1_record.json",
+    "ifc_sha256": "3272718ad59016d5ab759fa32a8140d76f5035844e3a1e78e36481c930f51ebc"
+  },
+  "self_checks": {
+    "dangling_references": 0,
+    "ifc_reparsed": true,
+    "warnings": []
+  }
+}

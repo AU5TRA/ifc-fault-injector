@@ -1,0 +1,65 @@
+INPUT MODEL
+  Source: D:\Real World BIMs\models\dental_clinic\arc.ifc
+  SHA256: 2ac970ce065ecac4e0c9e5f453a257169e90d0067f419b7e33533a64ef837880
+  Schema: IFC2X3
+  Length unit: METRE
+  Entity count: 41072
+
+--------------------
+INJECTED VIOLATION
+  Rule ID: A1
+  Domain: architectural
+  Clause: IBC 1010.1.1  - egress door clear width shall be not less than 815 mm
+  Description: Egress door clear width reduced from 915.0mm to 750.0mm, below the 815mm minimum
+  Attribute: IfcDoor.OverallWidth
+  Change: 915.0000000000005 -> 750.0
+  Mechanism: direct attribute write
+  Justification: width=915mm; 227 door(s) in this model share that width (the modal single-leaf size)
+
+--------------------
+WHERE TO FIND IT
+  Target GlobalId: 0mxk1RW8H5mvX1dNnpRqso
+  IFC Type: IfcDoor
+  Name: M_Single-Flush:0915 x 2134mm Exterior:0915 x 2134mm Exterior:252490
+  GlobalId: 0mxk1RW8H5mvX1dNnpRqso
+  STEP ID: 1897
+  Storey: First Floor
+  Storey elevation: -0.0 mm
+  World position: (-3995.0, 49843.0, 0.0) mm
+  element_id: 1897
+  mechanism: direct attribute write
+  threshold_mm: 815.0
+HOW TO SPOT IT IN A VIEWER
+  - RED (#E6194B) paint was applied to 1 item(s)
+  - Element name tagged as: [!A1 VIOLATION!] M_Single-Flush:0915 x 2134mm Exterior:0915 x 2134mm Exterior:252490
+  - Violation property set: Pset_ViolationMarker
+  - Marker box location(s) in mm: (-3995.0, 49843.0, 0.0)
+  - Marker box size: 500.0 mm
+
+Revit's IFC import often discards IfcSurfaceStyle colours - if the element is not coloured, search for the name tag above or look for the marker box.
+
+OUTPUT FILES
+  - out\dental_clinic_arc_A1_colored.ifc
+    SHA-256: 3272718ad59016d5ab759fa32a8140d76f5035844e3a1e78e36481c930f51ebc
+    The faulty model, marked up for a human - open this in Revit or an IFC viewer. Do NOT feed this one to a checker; the marking hands it the answer.
+  - out\dental_clinic_arc_A1_report.txt
+    This report.
+  - out\dental_clinic_arc_A1_record.json
+    The same facts, machine-readable.
+
+SELF-CHECKS
+  - Dangling references: 0
+  - IFC re-parse successful: True
+  - These are structural self-checks only. Independent clause verification was done when the script was generated, not here.
+
+COLOUR LEGEND
+  - A1: RED (#E6194B)
+  - A2: ORANGE (#F58231)
+  - A3: YELLOW (#FFE119)
+  - A4: GREEN (#3CB44B)
+  - A5: BLUE (#0082C8)
+  - S1: PURPLE (#911EB4)
+  - S2: CYAN (#46F0F0)
+  - S3: MAGENTA (#F032E6)
+  - S4: BROWN (#AA6E28)
+  - S5: MAROON (#800000)
