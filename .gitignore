@@ -31,3 +31,6 @@ ifcfault/library/generated/*.py
 !/bench_out/table.txt
 !/bench_out/table.tex
 !/bench_out/results.json
+!/bench_out/design_modification.json
+!/bench_out/design_modification.tex
+!/bench_out/design_modification.txt

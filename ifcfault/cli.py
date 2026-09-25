@@ -266,6 +266,42 @@ def _cmd_bench(args) -> int:
     return 0
 
 
+def _cmd_modstats(args) -> int:
+    """How much of a building one injected fault actually changes."""
+    from .modstats import measure_model, render, render_json, render_latex
+
+    sources = []
+    for pattern in args.sources:
+        matches = sorted(Path().glob(pattern)) if any(c in pattern for c in "*?[")             else [Path(pattern)]
+        sources.extend(matches)
+    missing = [p for p in sources if not p.exists()]
+    if missing:
+        print(f"error: no such file: {missing[0]}", file=sys.stderr)
+        return 2
+    if not sources:
+        print("error: no source models given", file=sys.stderr)
+        return 2
+
+    print(f"Measuring {len(sources)} model(s) x 10 rules. Local only, no LLM calls.")
+    print()
+    stats = [measure_model(p) for p in sources]
+
+    print()
+    text = render(stats)
+    print(text)
+
+    out = Path(args.outdir)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "design_modification.txt").write_text(text, encoding="utf-8")
+    (out / "design_modification.tex").write_text(render_latex(stats), encoding="utf-8")
+    (out / "design_modification.json").write_text(render_json(stats), encoding="utf-8")
+    print()
+    for name in ("design_modification.txt", "design_modification.tex",
+                 "design_modification.json"):
+        print(f"  wrote {out / name}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ifcfault",
@@ -331,6 +367,15 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--timeout", type=int, default=None,
                        help="seconds to allow each validation run (default 1800)")
     bench.set_defaults(func=_cmd_bench)
+
+    mod = subparsers.add_parser(
+        "modstats",
+        help="measure how much of a building each rule's fault actually changes")
+    mod.add_argument("sources", nargs="+",
+                     help="one or more .ifc paths (globs allowed)")
+    mod.add_argument("--outdir", default="bench_out",
+                     help="where the table goes (default: bench_out/)")
+    mod.set_defaults(func=_cmd_modstats)
 
     return parser
 

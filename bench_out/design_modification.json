@@ -1,0 +1,821 @@
+[
+  {
+    "source": "D:\\Real World BIMs\\models\\dental_clinic\\arc.ifc",
+    "megabytes": 12.4,
+    "roots": 41068,
+    "rules": [
+      {
+        "rule": "A1",
+        "applies": true,
+        "reason": "",
+        "candidates": 240,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00243,
+        "attribute": "IfcDoor.OverallWidth"
+      },
+      {
+        "rule": "A2",
+        "applies": true,
+        "reason": "",
+        "candidates": 9,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00243,
+        "attribute": "Pset_StairFlightCommon.RiserHeight"
+      },
+      {
+        "rule": "A3",
+        "applies": true,
+        "reason": "",
+        "candidates": 40,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00243,
+        "attribute": "Pset_WallCommon.FireRating"
+      },
+      {
+        "rule": "A4",
+        "applies": true,
+        "reason": "",
+        "candidates": 113,
+        "changed": 2,
+        "deleted": 0,
+        "touched": 2,
+        "pct_of_model": 0.00487,
+        "attribute": "IfcOpeningElement.ObjectPlacement (offset along host wall axis)"
+      },
+      {
+        "rule": "A5",
+        "applies": true,
+        "reason": "",
+        "candidates": 32,
+        "changed": 1,
+        "deleted": 1,
+        "touched": 2,
+        "pct_of_model": 0.00487,
+        "attribute": "IfcRelSpaceBoundary (one severed)"
+      },
+      {
+        "rule": "S1",
+        "applies": false,
+        "reason": "no IfcBeam with measurable span and depth geometry and a span of at least 3m (0 IfcBeam total)",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "S2",
+        "applies": false,
+        "reason": "no IfcColumn with a measurable cross-section (0 IfcColumn total)",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "S3",
+        "applies": true,
+        "reason": "",
+        "candidates": 3,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00243,
+        "attribute": "slab thickness"
+      },
+      {
+        "rule": "S4",
+        "applies": false,
+        "reason": "no column on any storey sits within 600mm in plan of a column on the storey immediately below it, so no continuous load path exists to break",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "S5",
+        "applies": true,
+        "reason": "",
+        "candidates": 3,
+        "changed": 22,
+        "deleted": 250,
+        "touched": 272,
+        "pct_of_model": 0.66232,
+        "attribute": "(all walls on the storey deleted)"
+      }
+    ]
+  },
+  {
+    "source": "D:\\Real World BIMs\\models\\dental_clinic\\str.ifc",
+    "megabytes": 18.2,
+    "roots": 20432,
+    "rules": [
+      {
+        "rule": "A1",
+        "applies": false,
+        "reason": "no door with a single-leaf width in the 700-1100mm band (0 IfcDoor total)",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "A2",
+        "applies": true,
+        "reason": "",
+        "candidates": 2,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00489,
+        "attribute": "Pset_StairCommon.RiserHeight"
+      },
+      {
+        "rule": "A3",
+        "applies": false,
+        "reason": "no walls or doors carry FireRating data, and no hosted door exists",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "A4",
+        "applies": false,
+        "reason": "no door found that is hosted in a wall of measurable length with a realistic existing clearance (500-3000mm) to the nearest wall end",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "A5",
+        "applies": false,
+        "reason": "no door forms a bridge edge touching a corridor space (0 IfcSpace, 0 IfcRelSpaceBoundary in this model  - either the file carries no door-level space-boundary data, or no space borders a room named like a corridor)",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "S1",
+        "applies": true,
+        "reason": "",
+        "candidates": 244,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00489,
+        "attribute": "cross-section depth"
+      },
+      {
+        "rule": "S2",
+        "applies": true,
+        "reason": "",
+        "candidates": 32,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00489,
+        "attribute": "cross-section dimension"
+      },
+      {
+        "rule": "S3",
+        "applies": true,
+        "reason": "",
+        "candidates": 4,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00489,
+        "attribute": "slab thickness"
+      },
+      {
+        "rule": "S4",
+        "applies": false,
+        "reason": "no column on any storey sits within 600mm in plan of a column on the storey immediately below it, so no continuous load path exists to break",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "S5",
+        "applies": false,
+        "reason": "only one storey ('TOF Footing') carries walls, so emptying it would remove every wall in the model rather than create a stiffness discontinuity between storeys",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      }
+    ]
+  },
+  {
+    "source": "D:\\Real World BIMs\\models\\schependomlaan\\str_engineer.ifc",
+    "megabytes": 0.9,
+    "roots": 1189,
+    "rules": [
+      {
+        "rule": "A1",
+        "applies": false,
+        "reason": "no door with a single-leaf width in the 700-1100mm band (0 IfcDoor total)",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "A2",
+        "applies": false,
+        "reason": "model contains no IfcStairFlight or IfcStair",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "A3",
+        "applies": false,
+        "reason": "no walls or doors carry FireRating data, and no hosted door exists",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "A4",
+        "applies": false,
+        "reason": "no door found that is hosted in a wall of measurable length with a realistic existing clearance (500-3000mm) to the nearest wall end",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "A5",
+        "applies": false,
+        "reason": "no door forms a bridge edge touching a corridor space (0 IfcSpace, 0 IfcRelSpaceBoundary in this model  - either the file carries no door-level space-boundary data, or no space borders a room named like a corridor)",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "S1",
+        "applies": true,
+        "reason": "",
+        "candidates": 24,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.0841,
+        "attribute": "cross-section depth"
+      },
+      {
+        "rule": "S2",
+        "applies": true,
+        "reason": "",
+        "candidates": 4,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.0841,
+        "attribute": "cross-section dimension"
+      },
+      {
+        "rule": "S3",
+        "applies": true,
+        "reason": "",
+        "candidates": 27,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.0841,
+        "attribute": "slab thickness"
+      },
+      {
+        "rule": "S4",
+        "applies": false,
+        "reason": "fewer than two storeys declare an Elevation (0 of 9 IfcBuildingStorey), so 'the storey below' is undefined",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "S5",
+        "applies": true,
+        "reason": "",
+        "candidates": 6,
+        "changed": 10,
+        "deleted": 372,
+        "touched": 382,
+        "pct_of_model": 32.12784,
+        "attribute": "(all walls on the storey deleted)"
+      }
+    ]
+  },
+  {
+    "source": "D:\\Real World BIMs\\models\\schependomlaan\\arc_design.ifc",
+    "megabytes": 47.0,
+    "roots": 46302,
+    "rules": [
+      {
+        "rule": "A1",
+        "applies": true,
+        "reason": "",
+        "candidates": 73,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00216,
+        "attribute": "IfcDoor.OverallWidth"
+      },
+      {
+        "rule": "A2",
+        "applies": true,
+        "reason": "",
+        "candidates": 9,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00216,
+        "attribute": "Pset_StairFlightCommon.RiserHeight"
+      },
+      {
+        "rule": "A3",
+        "applies": true,
+        "reason": "",
+        "candidates": 15,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00216,
+        "attribute": "Pset_DoorCommon.FireRating"
+      },
+      {
+        "rule": "A4",
+        "applies": true,
+        "reason": "",
+        "candidates": 29,
+        "changed": 2,
+        "deleted": 0,
+        "touched": 2,
+        "pct_of_model": 0.00432,
+        "attribute": "IfcOpeningElement.ObjectPlacement (offset along host wall axis)"
+      },
+      {
+        "rule": "A5",
+        "applies": true,
+        "reason": "",
+        "candidates": 2,
+        "changed": 1,
+        "deleted": 1,
+        "touched": 2,
+        "pct_of_model": 0.00432,
+        "attribute": "IfcRelSpaceBoundary (one severed)"
+      },
+      {
+        "rule": "S1",
+        "applies": true,
+        "reason": "",
+        "candidates": 28,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00216,
+        "attribute": "cross-section depth"
+      },
+      {
+        "rule": "S2",
+        "applies": true,
+        "reason": "",
+        "candidates": 9,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00216,
+        "attribute": "cross-section dimension"
+      },
+      {
+        "rule": "S3",
+        "applies": true,
+        "reason": "",
+        "candidates": 69,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00216,
+        "attribute": "slab thickness"
+      },
+      {
+        "rule": "S4",
+        "applies": true,
+        "reason": "",
+        "candidates": 4,
+        "changed": 2,
+        "deleted": 10,
+        "touched": 12,
+        "pct_of_model": 0.02592,
+        "attribute": "(entity deleted)"
+      },
+      {
+        "rule": "S5",
+        "applies": true,
+        "reason": "",
+        "candidates": 6,
+        "changed": 15,
+        "deleted": 2192,
+        "touched": 2207,
+        "pct_of_model": 4.76653,
+        "attribute": "(all walls on the storey deleted)"
+      }
+    ]
+  },
+  {
+    "source": "D:\\Real World BIMs\\models\\sixty5\\str.ifc",
+    "megabytes": 7.1,
+    "roots": 15275,
+    "rules": [
+      {
+        "rule": "A1",
+        "applies": false,
+        "reason": "no door with a single-leaf width in the 700-1100mm band (0 IfcDoor total)",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "A2",
+        "applies": false,
+        "reason": "model contains no IfcStairFlight or IfcStair",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "A3",
+        "applies": true,
+        "reason": "",
+        "candidates": 299,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00655,
+        "attribute": "Pset_WallCommon.FireRating"
+      },
+      {
+        "rule": "A4",
+        "applies": false,
+        "reason": "no door found that is hosted in a wall of measurable length with a realistic existing clearance (500-3000mm) to the nearest wall end",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "A5",
+        "applies": false,
+        "reason": "no door forms a bridge edge touching a corridor space (0 IfcSpace, 0 IfcRelSpaceBoundary in this model  - either the file carries no door-level space-boundary data, or no space borders a room named like a corridor)",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "S1",
+        "applies": true,
+        "reason": "",
+        "candidates": 11,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00655,
+        "attribute": "cross-section depth"
+      },
+      {
+        "rule": "S2",
+        "applies": true,
+        "reason": "",
+        "candidates": 60,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00655,
+        "attribute": "cross-section dimension"
+      },
+      {
+        "rule": "S3",
+        "applies": true,
+        "reason": "",
+        "candidates": 49,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00655,
+        "attribute": "slab thickness"
+      },
+      {
+        "rule": "S4",
+        "applies": true,
+        "reason": "",
+        "candidates": 190,
+        "changed": 3,
+        "deleted": 3,
+        "touched": 6,
+        "pct_of_model": 0.03928,
+        "attribute": "(entity deleted)"
+      },
+      {
+        "rule": "S5",
+        "applies": true,
+        "reason": "",
+        "candidates": 17,
+        "changed": 7,
+        "deleted": 148,
+        "touched": 155,
+        "pct_of_model": 1.01473,
+        "attribute": "(all walls on the storey deleted)"
+      }
+    ]
+  },
+  {
+    "source": "D:\\Real World BIMs\\models\\wbdg_office\\arc.ifc",
+    "megabytes": 3.9,
+    "roots": 14774,
+    "rules": [
+      {
+        "rule": "A1",
+        "applies": true,
+        "reason": "",
+        "candidates": 96,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00677,
+        "attribute": "IfcDoor.OverallWidth"
+      },
+      {
+        "rule": "A2",
+        "applies": true,
+        "reason": "",
+        "candidates": 6,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00677,
+        "attribute": "Pset_StairFlightCommon.RiserHeight"
+      },
+      {
+        "rule": "A3",
+        "applies": true,
+        "reason": "",
+        "candidates": 38,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00677,
+        "attribute": "Pset_WallCommon.FireRating"
+      },
+      {
+        "rule": "A4",
+        "applies": true,
+        "reason": "",
+        "candidates": 25,
+        "changed": 2,
+        "deleted": 0,
+        "touched": 2,
+        "pct_of_model": 0.01354,
+        "attribute": "IfcOpeningElement.ObjectPlacement (offset along host wall axis)"
+      },
+      {
+        "rule": "A5",
+        "applies": true,
+        "reason": "",
+        "candidates": 3,
+        "changed": 1,
+        "deleted": 1,
+        "touched": 2,
+        "pct_of_model": 0.01354,
+        "attribute": "IfcRelSpaceBoundary (one severed)"
+      },
+      {
+        "rule": "S1",
+        "applies": false,
+        "reason": "no IfcBeam with measurable span and depth geometry and a span of at least 3m (0 IfcBeam total)",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "S2",
+        "applies": false,
+        "reason": "no IfcColumn with a measurable cross-section (0 IfcColumn total)",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "S3",
+        "applies": true,
+        "reason": "",
+        "candidates": 2,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.00677,
+        "attribute": "slab thickness"
+      },
+      {
+        "rule": "S4",
+        "applies": false,
+        "reason": "no column on any storey sits within 600mm in plan of a column on the storey immediately below it, so no continuous load path exists to break",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "S5",
+        "applies": true,
+        "reason": "",
+        "candidates": 3,
+        "changed": 50,
+        "deleted": 2524,
+        "touched": 2574,
+        "pct_of_model": 17.4225,
+        "attribute": "(all walls on the storey deleted)"
+      }
+    ]
+  },
+  {
+    "source": "D:\\Real World BIMs\\models\\west_riverside_hospital\\str.ifc",
+    "megabytes": 6.1,
+    "roots": 12990,
+    "rules": [
+      {
+        "rule": "A1",
+        "applies": false,
+        "reason": "no door with a single-leaf width in the 700-1100mm band (0 IfcDoor total)",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "A2",
+        "applies": true,
+        "reason": "",
+        "candidates": 2,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.0077,
+        "attribute": "Pset_StairCommon.RiserHeight"
+      },
+      {
+        "rule": "A3",
+        "applies": false,
+        "reason": "no walls or doors carry FireRating data, and no hosted door exists",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "A4",
+        "applies": false,
+        "reason": "no door found that is hosted in a wall of measurable length with a realistic existing clearance (500-3000mm) to the nearest wall end",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "A5",
+        "applies": false,
+        "reason": "no door forms a bridge edge touching a corridor space (0 IfcSpace, 0 IfcRelSpaceBoundary in this model  - either the file carries no door-level space-boundary data, or no space borders a room named like a corridor)",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "S1",
+        "applies": true,
+        "reason": "",
+        "candidates": 15,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.0077,
+        "attribute": "cross-section depth"
+      },
+      {
+        "rule": "S2",
+        "applies": true,
+        "reason": "",
+        "candidates": 167,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.0077,
+        "attribute": "cross-section dimension"
+      },
+      {
+        "rule": "S3",
+        "applies": true,
+        "reason": "",
+        "candidates": 7,
+        "changed": 1,
+        "deleted": 0,
+        "touched": 1,
+        "pct_of_model": 0.0077,
+        "attribute": "slab thickness"
+      },
+      {
+        "rule": "S4",
+        "applies": false,
+        "reason": "no column on any storey sits within 600mm in plan of a column on the storey immediately below it, so no continuous load path exists to break",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      },
+      {
+        "rule": "S5",
+        "applies": false,
+        "reason": "only one storey ('Level 1') carries walls, so emptying it would remove every wall in the model rather than create a stiffness discontinuity between storeys",
+        "candidates": 0,
+        "changed": 0,
+        "deleted": 0,
+        "touched": 0,
+        "pct_of_model": 0.0,
+        "attribute": ""
+      }
+    ]
+  }
+]

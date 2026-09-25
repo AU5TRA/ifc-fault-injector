@@ -1,0 +1,56 @@
+============================================================================================
+ DESIGN-MODIFICATION FOOTPRINT  --  what ONE injected fault changes
+============================================================================================
+
+Model                                 MB   IfcRoot   applicable rules
+--------------------------------------------------------------------------------------------
+  dental_clinic/arc.ifc               12    41,068   A1, A2, A3, A4, A5, S3, S5
+  dental_clinic/str.ifc               18    20,432   A2, S1, S2, S3
+  schependomlaan/str_engineer.ifc      1     1,189   S1, S2, S3, S5
+  schependomlaan/arc_design.ifc       47    46,302   A1, A2, A3, A4, A5, S1, S2, S3, S4, S5
+  sixty5/str.ifc                       7    15,275   A3, S1, S2, S3, S4, S5
+  wbdg_office/arc.ifc                  4    14,774   A1, A2, A3, A4, A5, S3, S5
+  west_riverside_hospital/str.ifc      6    12,990   A2, S1, S2, S3
+
+--------------------------------------------------------------------------------------------
+Rule   Mechanism             applies        cand.  changed    deleted    % of model
+--------------------------------------------------------------------------------------------
+A1     attribute write           3/7       73-240        1          0  0.002-0.007%
+A2     attribute write           5/7          2-9        1          0  0.002-0.008%
+A3     attribute write           4/7       15-299        1          0  0.002-0.007%
+A4     placement move            3/7       25-113        2          0  0.004-0.014%
+A5     relationship delete       3/7         2-32        1          1  0.004-0.014%
+S1     geometry resize           5/7       11-244        1          0  0.002-0.084%
+S2     geometry resize           5/7        4-167        1          0  0.002-0.084%
+S3     geometry resize           7/7         2-69        1          0  0.002-0.084%
+S4     element delete            2/7        4-190      2-3       3-10  0.026-0.039%
+S5     storey clear              5/7         3-17     7-50   148-2524 0.662-32.128%
+--------------------------------------------------------------------------------------------
+
+  median footprint, all applicable (rule, model) pairs : 0.0065% of IfcRoot entities
+  edit-only rules  (A1-A4, S1-S3)                      : 0.0841% at worst  - one or two entities
+  deleting rules   (A5, S4, S5)                        : up to 32.13%
+
+============================================================================================
+ READING THIS
+--------------------------------------------------------------------------------------------
+
+ 'changed'/'deleted' count IfcRoot entities, taken from the mutation record
+ the rule itself writes  - the same declaration ifcfault/verify/ holds it to.
+ An undeclared change is a validation failure, so these numbers are not a
+ summary of the diff; they ARE the diff.
+
+ Eight of the ten rules touch one or two entities, which is the point: a
+ checker under test has to find one wrong door among forty thousand entities.
+ A fault big enough to see without looking is not a test of anything.
+
+ S5 is the deliberate exception. A soft storey IS the absence of a storey's
+ walls, so the mutation is large by definition  - and it is why the marker
+ box exists, since deleted elements leave nothing to colour.
+
+ 'applies' is how many of the sampled buildings the rule fits. A structural
+ rule on an architectural model has nothing to target; that is a property of
+ the corpus, not a failure. `ifcfault survey --source <model>` says which
+ rules fit a given file, and why not, for the rest.
+
+============================================================================================
