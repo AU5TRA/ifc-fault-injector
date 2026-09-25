@@ -206,6 +206,66 @@ def _cmd_emit(args) -> int:
     return 0 if result.ok else 1
 
 
+def _cmd_bench(args) -> int:
+    """Run the same task suite through several models and table the result."""
+    from .bench import (
+        DEFAULT_TASKS, MODELS, estimate, render_json, render_latex, render_text,
+        run_bench,
+    )
+
+    labels = args.models or list(MODELS)
+    unknown = [m for m in labels if m not in MODELS]
+    if unknown:
+        print(f"error: unknown model label(s): {', '.join(unknown)}", file=sys.stderr)
+        print(f"       known: {', '.join(MODELS)}", file=sys.stderr)
+        print("       (or pass a raw OpenRouter id)", file=sys.stderr)
+        return 2
+
+    if args.cost_review:
+        from .bench import render_cost_latex, render_cost_review
+
+        text = render_cost_review(labels)
+        print(text)
+        out = Path(args.outdir)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "cost_review.txt").write_text(text, encoding="utf-8")
+        (out / "cost_review.tex").write_text(render_cost_latex(labels), encoding="utf-8")
+        print()
+        print(f"  wrote {out / 'cost_review.txt'}")
+        print(f"  wrote {out / 'cost_review.tex'}")
+        print()
+        print("Projected from measured token counts and live provider pricing.")
+        print("Nothing was spent. % Validated stays '-' until `bench` is run for real.")
+        return 0
+
+    if args.estimate_only:
+        print(estimate(labels, DEFAULT_TASKS))
+        print()
+        print("Nothing was spent. Drop --estimate-only to run it for real.")
+        return 0
+
+    print(estimate(labels, DEFAULT_TASKS))
+    print()
+    print(f"Running {len(labels)} model(s) x {len(DEFAULT_TASKS)} task(s). "
+          f"The cache is bypassed, so this bills for real.")
+    runs = run_bench(labels, DEFAULT_TASKS, outdir=Path(args.outdir),
+                     timeout_s=args.timeout)
+
+    print()
+    print(render_text(runs, DEFAULT_TASKS))
+
+    out = Path(args.outdir)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "results.json").write_text(render_json(runs), encoding="utf-8")
+    (out / "table.txt").write_text(render_text(runs, DEFAULT_TASKS), encoding="utf-8")
+    (out / "table.tex").write_text(render_latex(runs), encoding="utf-8")
+    print()
+    print(f"  wrote {out / 'results.json'}")
+    print(f"  wrote {out / 'table.txt'}")
+    print(f"  wrote {out / 'table.tex'}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ifcfault",
@@ -254,6 +314,23 @@ def build_parser() -> argparse.ArgumentParser:
     emit_parser.add_argument("--timeout", type=int, default=None,
                              help="seconds to allow the validation run (default 1800)")
     emit_parser.set_defaults(func=_cmd_emit)
+
+    bench = subparsers.add_parser(
+        "bench", help="run the same task suite through several models and table the result")
+    bench.add_argument("--models", nargs="*", default=None,
+                       help="model labels to compare (default: all known). "
+                            "Use --estimate-only first to see what it would cost")
+    bench.add_argument("--outdir", default="bench_out",
+                       help="where the scripts and the table go (default: bench_out/)")
+    bench.add_argument("--estimate-only", action="store_true",
+                       help="print the projected cost and exit, spending nothing")
+    bench.add_argument("--cost-review", action="store_true",
+                       help="print the projected COST REVIEW table (text + LaTeX) and "
+                            "exit, spending nothing. Cost is projected from measured "
+                            "token counts across every provider the model is served by")
+    bench.add_argument("--timeout", type=int, default=None,
+                       help="seconds to allow each validation run (default 1800)")
+    bench.set_defaults(func=_cmd_bench)
 
     return parser
 

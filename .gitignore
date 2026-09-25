@@ -22,3 +22,12 @@ ifcfault/.llm_cache/
 # `git add -f` it deliberately.
 ifcfault/library/generated/*.py
 !ifcfault/library/generated/__init__.py
+
+# Benchmark scripts and IFCs. The TABLES are small and worth keeping,
+# so they are re-included; everything a bench run emits is not.
+/bench_out/*
+!/bench_out/cost_review.txt
+!/bench_out/cost_review.tex
+!/bench_out/table.txt
+!/bench_out/table.tex
+!/bench_out/results.json

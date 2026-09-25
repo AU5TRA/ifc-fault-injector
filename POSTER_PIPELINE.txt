@@ -1,0 +1,255 @@
+================================================================================
+ ifcfault  --  PIPELINE  (poster-ready content)
+================================================================================
+ Source of truth: the [n/6] stage logging in ifcfault/emit.py
+ Written for poster layout. Blocks below are meant to be lifted as-is.
+================================================================================
+
+
+--------------------------------------------------------------------------------
+ 0. HEADLINE BLOCK
+--------------------------------------------------------------------------------
+
+TITLE
+  ifcfault -- generating known-defect IFC models for testing compliance checkers
+
+ONE-SENTENCE PROBLEM
+  You cannot tell whether an automated compliance checker works without files
+  whose defects you know exactly -- and hand-authoring those against real 300MB
+  building models is not viable.
+
+ONE-SENTENCE SOLUTION
+  Give it one real IFC model and one or more building-code clauses; it returns a
+  standalone, validated Python script that injects the defect and documents it.
+
+ONE-LINE FLOW  (for a strip across the top of the poster)
+
+  IFC + CLAUSE  ->  RESOLVE RULE  ->  GENERATE HARNESS  ->  ASSEMBLE
+                ->  EXECUTE & VERIFY  ->  VALIDATED SCRIPT  ->  FAULTY IFC
+
+
+--------------------------------------------------------------------------------
+ 1. BAND 1 -- EMISSION  (what the tool does)
+--------------------------------------------------------------------------------
+ Six stages. Each has a SHORT LABEL (for the box), a CAPTION (one line under it),
+ and FINE PRINT (only if the panel has room).
+--------------------------------------------------------------------------------
+
+STAGE 1
+  SHORT LABEL : INGEST
+  CAPTION     : Read the IFC, take an inventory.
+  FINE PRINT  : Schema, length unit, and counts of every element of interest.
+                The model is closed again before any LLM call -- holding a 340MB
+                file open across a generation is wasted memory.
+
+STAGE 2
+  SHORT LABEL : RESOLVE THE RULE
+  CAPTION     : Lift it from the library, or have the model write it.
+  FINE PRINT  : A saved rule's applicable / candidates / apply_violation are
+                lifted VERBATIM by AST line-range extraction -- comments intact.
+                A new clause (--clause + --domain) is synthesized instead.
+                Multi-fault plans (A1,S1 or A1:3) are expanded at this stage.
+
+STAGE 3
+  SHORT LABEL : GENERATE THE HARNESS
+  CAPTION     : Four bounded functions, one LLM call each.
+  FINE PRINT  : _mark_violation, _report_top, _report_bottom, main -- fixed
+                signatures, each requested and gated on its own. One function
+                with one job is reliable where one long generation is not: asked
+                for the whole harness at once, a 32B code model produces
+                something that looks right and quietly drops a step.
+
+STAGE 4
+  SHORT LABEL : ASSEMBLE
+  CAPTION     : One standalone file. ifcopenshell is its only dependency.
+  FINE PRINT  : Rule + the transitive closure of the helpers it actually
+                references + harness. Symbols are namespaced per rule
+                (candidates_A1) by a deterministic AST rewrite -- not by the
+                model. An A1 script carries five short helpers; an A5 script
+                carries the space-adjacency graph builder. Nothing else.
+  >> GATE 1 -- STATIC  (ifcfault/safety.py)
+                Import allowlist; no eval / exec / subprocess / shutil /
+                network / os.remove. Pure AST analysis -- it never runs the code
+                it inspects, and nothing is executed anywhere until it passes.
+
+STAGE 5
+  SHORT LABEL : EXECUTE & VERIFY
+  CAPTION     : Prove it against the real model. Never trust it for looking right.
+  >> GATE 2 -- SUBPROCESS
+                Run against the real source model with a timeout. Never imported
+                into the generator's own process: an infinite loop, a segfault in
+                ifcopenshell, or a stray os.remove stays behind a process
+                boundary.
+  >> GATE 3 -- INDEPENDENT VERIFICATION  (ifcfault/verify/)
+                Imports nothing from the rule library. Re-derives every quantity
+                itself -- unit scale, cross-section, storey ordering, space graph
+                -- deliberately using the OPPOSITE unit convention. If both
+                agree, they agreed twice by two routes. A test fails if that
+                independence is ever broken.
+  WHAT IS CHECKED
+                - the file parses cleanly
+                - no dangling references
+                - no relationship left with an empty member list
+                  (an EXPRESS SET [1:?] violation that remove() leaves behind)
+                - the diff from the source is EXACTLY what the mutation record
+                  declares -- an undeclared GlobalId is an unexplained change
+                - the clause really is violated, re-derived independently
+                - the prose report does not contradict the JSON record
+
+STAGE 6
+  SHORT LABEL : CLASSIFY & HAND OVER
+  CAPTION     : Failures are classified, because the right response differs.
+  FINE PRINT  : harness      -> the generated code is broken. Regenerate ONLY the
+                               one function the traceback blames; the other three
+                               have already passed. Automatic, up to 4 rounds.
+                rule         -> the harness worked but rule and model do not fit.
+                               For a SAVED rule, regeneration cannot help: stop
+                               and hand over the verifier's measurements.
+                environment  -> the rule reports itself inapplicable. Run survey.
+  ON SUCCESS  : the script, plus <stem>_emission_validation.txt recording what
+                was checked before hand-over. A synthesized rule is saved to the
+                library for reuse -- a human leaving it there is what makes it
+                trusted, not the fact that it was generated.
+
+RETRY EDGE  (the most distinctive arrow in the diagram -- draw it)
+  Stage 6 --[harness fault: ONE function only]--> Stage 3
+  The loop is deliberately narrow in two senses: it re-asks only when the model
+  could actually fix the failure, and it regenerates only the single function
+  that owns it. Re-rolling the other three to fix an unrelated bug is how a
+  working script becomes a broken one.
+
+
+--------------------------------------------------------------------------------
+ 2. BAND 2 -- RUN  (what the user gets)
+--------------------------------------------------------------------------------
+
+  python generated/<stem>_inject.py --outdir out
+
+  STEP 1  Deterministic target pick -- ranked score, ties broken on GlobalId,
+          so nothing depends on iteration order.
+  STEP 2  Mutation DERIVED FROM THE ELEMENT, never a constant. A fixed 400mm
+          beam depth violates a span/depth limit over 11m and satisfies it
+          over 8m; the rules solve for a value that clears the threshold by a
+          clear margin whatever the element's dimensions.
+  STEP 3  The target must currently COMPLY. Making an already-broken element
+          worse is not an injected defect -- a checker would have flagged the
+          untouched file too.
+  STEP 4  Multi-fault plans are ALL OR NOTHING. If any fault cannot be injected,
+          the script writes nothing and exits 2. A file named for four faults
+          that quietly contains three is a wrong test case, not a partial one.
+
+  WRITES
+    out/<stem>.ifc           the faulty model, UNMARKED  -- for the checker
+    out/<stem>_report.txt    what changed, where, and how to find it
+    out/<stem>_record.json   the same facts, machine-readable
+
+  WITH --colored
+    out/<stem>_colored.ifc   the SAME fault, marked four redundant ways --
+                             colour (IfcStyledItem), name tag, marker box
+                             (IfcBuildingElementProxy), Pset_ViolationMarker.
+                             For a human. Never for the checker under test:
+                             colouring it would hand the checker the answer.
+
+
+--------------------------------------------------------------------------------
+ 3. CALLOUT BOXES  (the claims that carry the work)
+--------------------------------------------------------------------------------
+
+  THREE GATES, NO TRUST
+    static analysis  ->  subprocess boundary  ->  independent re-derivation
+    Nothing generated ships on the strength of looking right.
+
+  THE SCRIPT IS THE DELIVERABLE
+    One file, one dependency, reads top to bottom, and says in its own header
+    what wrote each part of it. Put it in an appendix, hand it to a reviewer,
+    re-run it on a different model, or edit the threshold and re-run. A bare
+    output IFC would tell you none of that.
+
+  BYTE-IDENTICAL RERUNS
+    Ranked selection with GlobalId tie-breaks, hash-derived GUIDs for every
+    entity the marking creates, LLM calls at temperature 0 and cached on disk by
+    hash(model, messages, params).
+
+  THE MODEL WRITES POLICY. THE LIBRARY PROVIDES IFC MECHANICS.
+    Generated : main(), argparse, the colouring calls, the report layout,
+                the multi-fault loop, a new clause's rule
+    Lifted    : a saved rule's logic, IFC primitives, styled items, marker
+                geometry, deterministic GUIDs, the deletion cascade
+    Neither   : symbol namespacing -- a deterministic AST rewrite
+
+  COVERAGE
+    10 built-in rules  |  5 architectural (A1-A5)  |  5 structural (S1-S5)
+    137 tests  |  real-world IFC models
+
+
+--------------------------------------------------------------------------------
+ 4. RULE TABLE  (if the poster has room for one)
+--------------------------------------------------------------------------------
+
+  ID   CLAUSE                                        MECHANISM
+  --   -------------------------------------------   ---------------------------
+  A1   IBC 1010.1.1 - egress door width >= 815mm     write IfcDoor.OverallWidth
+  A2   IBC 1011.5.2 - stair riser <= 178mm           overwrite RiserHeight
+  A3   IBC Ch.7 / Table 716.1(2) - fire rating       downgrade or blank FireRating
+  A4   ANSI A117.1 404.2.4 - manoeuvring clearance   move opening along its wall
+  A5   IBC 1020.4 - dead-end corridor                delete one IfcRelSpaceBoundary
+  S1   EC2 7.4.2 / ACI 318 9.3.1.1 - span/depth      private cross-section resize
+  S2   EC8 5.4.1.2.1 - column min dimension          private cross-section resize
+  S3   ACI 318 Table 7.3.1.1 - slab thickness        private extrusion depth change
+  S4   ASCE 7 Table 12.3-2 - floating column         delete supporting column(s)
+  S5   ASCE 7 / EC8 4.2.3.3 - soft storey            delete every wall on a storey
+
+  Colours are fixed per rule so several faults stay readable in one file:
+    A1 red | A2 orange | A3 yellow | A4 green | A5 blue
+    S1 purple | S2 cyan | S3 magenta | S4 brown | S5 maroon
+
+
+--------------------------------------------------------------------------------
+ 5. ASCII LAYOUT REFERENCE  (for whoever draws the diagram)
+--------------------------------------------------------------------------------
+
+   INPUTS                         BAND 1 -- EMISSION
+
+  +----------+
+  | real IFC |--+   +---------+   +-----------+   +----------+   +----------+
+  |  model   |  +-->|    1    |-->|     2     |-->|    3     |-->|    4     |
+  +----------+  |   | INGEST  |   |  RESOLVE  |   | GENERATE |   | ASSEMBLE |
+  +----------+  |   |         |   | THE RULE  |   | HARNESS  |   |          |
+  |   code   |--+   +---------+   +-----------+   +----------+   +----+-----+
+  |  clause  |                     lift | write    4 functions        |
+  +----------+                                          ^        [ GATE 1 ]
+                                                        |          static
+                                                        |             |
+                                                        |             v
+                        +----------------+       +------+-------------------+
+                        |       6        |<------|            5            |
+                        |  CLASSIFY  &   |       |     EXECUTE & VERIFY    |
+                        |   HAND OVER    |       |                         |
+                        +-------+--------+       | [ GATE 2 ] subprocess   |
+                                |                | [ GATE 3 ] independent  |
+       retry ONE function ------+                +-------------------------+
+       (harness fault only)
+                                |
+                                v
+                     +-----------------------+
+                     |  VALIDATED STANDALONE |         BAND 2 -- RUN
+                     |        SCRIPT         |
+                     +-----------+-----------+
+                                 |  python <stem>_inject.py
+                                 v
+        +---------------+---------------+---------------+
+        |  faulty .ifc  |  report.txt   |  record.json  |   (+ _colored.ifc
+        |   UNMARKED    |               |               |      with --colored)
+        |   for the     |  where the    |   machine-    |
+        |   checker     |  fault is     |   readable    |
+        +---------------+---------------+---------------+
+
+  DRAWING NOTES
+    - The retry arrow from 6 back to 3 is the most distinctive thing here.
+      Label it "ONE function" -- its narrowness is the claim.
+    - Draw the three gates as a vertical stack inside stages 4-5 rather than as
+      their own boxes, so the main flow stays six across.
+    - Inputs on the left, deliverables at the bottom; the two bands then read as
+      one left-to-right sweep with a single fold.
+
+================================================================================

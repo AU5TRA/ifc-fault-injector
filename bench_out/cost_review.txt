@@ -1,0 +1,50 @@
+========================================================================================
+ COST REVIEW  --  one validated injection script, by code model
+========================================================================================
+
+                                Single-fault emission        Multi-fault emission
+Model                       Prov.  % Valid.   $ Est. Cost    % Valid.   $ Est. Cost
+----------------------------------------------------------------------------------------
+  Claude Opus 5                 3         -   0.1368-0.2736        -   0.1621-0.3243
+  GPT-5.3-Codex                 2         -   0.0654-0.1307        -   0.0774-0.1548
+  Qwen2.5-Coder-32B-Instruct    1      0.00          0.0104     0.00          0.0124
+  Qwen3-Coder                   5     75.00   0.0065-0.0267    75.00   0.0078-0.0316
+----------------------------------------------------------------------------------------
+
+ MEASURED  (what this project actually billed)
+----------------------------------------------------------------------------------------
+  Qwen2.5-Coder-32B-Instruct  40 call(s), 40 failed | 0/3 emission(s) validated
+                             0/40 calls returned a complete body: the provider answers HTTP 200 with finish_reason=error and a body cut mid-token
+  Qwen3-Coder                 55 call(s), 0 failed | 3/4 emission(s) validated
+                             3/4 validated; the 4th failed `environment` (S1 needs beams, the architectural model has none) - not a harness failure
+
+========================================================================================
+ METHOD
+----------------------------------------------------------------------------------------
+
+ Token counts are MEASURED on this project, not guessed. Two cache-bypassed
+ qwen3-coder emissions, four harness calls each:
+
+   single-fault    10690 prompt +  3333 completion tok   (billed $0.01287)
+   multi-fault     12759 prompt +  3934 completion tok   (billed $0.01713)
+   repair round     3640 prompt +   958 completion tok   (ONE function only)
+
+ Tokens are a property of the WORK, not of the model: the prompt is the same
+ template and the same model inventory whoever answers it, and the completion
+ is one function of a fixed shape. Pricing those same counts at another
+ model's published rate is therefore a fair projection.
+
+ What it does NOT predict is how many repair rounds a model needs -- and that
+ is exactly what differs between models. A model that needs three rounds costs
+ about 1.5x its single-round figure. % Validated and rounds can only come from
+ running the suite; `python -m ifcfault bench` does that.
+
+ 'Prov.' is how many endpoints OpenRouter serves the model from. An open-weight
+ model is routed across providers at different prices, so its cost is a RANGE,
+ and which end you land on is not under your control. Observed in this
+ project's log: billed cost per call ran from 0.64x to 4.12x the headline rate.
+
+ Cost excludes the validation run, which is local: parsing the IFC and
+ re-deriving the clause costs wall-clock, not tokens.
+
+========================================================================================
