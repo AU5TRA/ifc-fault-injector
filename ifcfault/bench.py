@@ -48,23 +48,40 @@ class Task:
     exercises: str
 
 
-#: The suite. Deliberately small and deliberately varied: a plain saved rule,
-#: a rule whose mutation DELETES elements, and a multi-fault plan. Between
-#: them they cover every shape the harness has to handle.
+_ARC = r"D:\Real World BIMs\models\wbdg_office\arc.ifc"
+_STR = r"D:\Real World BIMs\models\schependomlaan\str_engineer.ifc"
+_COL = r"D:\Real World BIMs\models\sixty5\str.ifc"
+
+#: The suite: all ten rules, plus two multi-fault plans.
 #:
-#: Sources are picked so the rule actually applies  - S-rules need a
-#: structural model, and asking for one on an architectural file measures
-#: the corpus, not the model.
+#: Every pairing here was VERIFIED APPLICABLE by `ifcfault modstats` before
+#: being put in the list, and each rule is paired with the smallest building
+#: it fits. Both halves of that matter.
+#:
+#: Applicable, because a task that fails `environment` failed for want of an
+#: IfcBeam, not for want of a model that can write code  - scoring it against
+#: the model would measure the corpus instead. Every failure this suite can
+#: produce is therefore attributable to the harness the model wrote.
+#:
+#: Smallest, because validation parses the building in a subprocess and that
+#: parse, not the generation, is what a benchmark run spends its wall-clock
+#: on. Nothing is learned from doing it against 327MB instead of 1MB.
+#:
+#: Twelve tasks puts the resolution at 8.3 points, which is fine enough to
+#: separate models without pretending to a precision 12 samples cannot carry.
 DEFAULT_TASKS: tuple[Task, ...] = (
-    Task("A1-single", "A1",
-         r"D:\Real World BIMs\models\dental_clinic\arc.ifc",
-         "one saved rule, direct attribute write"),
-    Task("S5-delete", "S5",
-         r"D:\Real World BIMs\models\schependomlaan\str_engineer.ifc",
-         "a rule that deletes elements, so only a marker can point at it"),
-    Task("A1+A2-multi", "A1,A2",
-         r"D:\Real World BIMs\models\dental_clinic\arc.ifc",
-         "multi-fault plan: the loop and the exclusion set"),
+    Task("A1", "A1", _ARC, "egress door width: direct attribute write"),
+    Task("A2", "A2", _ARC, "stair riser: attribute write with a fallback pset"),
+    Task("A3", "A3", _ARC, "fire rating: downgrade a string-valued property"),
+    Task("A4", "A4", _ARC, "manoeuvring clearance: move an opening along its wall"),
+    Task("A5", "A5", _ARC, "dead-end corridor: delete one space boundary"),
+    Task("S1", "S1", _STR, "span/depth: resize a private cross-section"),
+    Task("S2", "S2", _STR, "column dimension: resize a private cross-section"),
+    Task("S3", "S3", _STR, "slab thickness: change a private extrusion depth"),
+    Task("S4", "S4", _COL, "floating column: delete the supporting column(s)"),
+    Task("S5", "S5", _STR, "soft storey: delete every wall on one storey"),
+    Task("A1+A2", "A1,A2", _ARC, "multi-fault: the loop and the exclusion set"),
+    Task("S1+S3", "S1,S3", _STR, "multi-fault across two structural rules"),
 )
 
 #: Resolved OpenRouter ids. A friendly name maps to exactly one id so the
